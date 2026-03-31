@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.duck/
+*.env
+.env*
+*.log
+DUCK.md
+*.tar.gz

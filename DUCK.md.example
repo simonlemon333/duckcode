@@ -1,0 +1,31 @@
+# My Project
+
+Project context file — Duck injects this into every conversation.
+Rename to `DUCK.md` (or `CLAUDE.md`) and customize for your project.
+
+## project layout
+
+```
+src/
+├── ...
+```
+
+## run / build
+
+```bash
+npm install
+npm run dev
+npm run build
+npm run test
+```
+
+## key decisions
+
+- Describe your architecture choices here
+- List important patterns or conventions
+- Note any gotchas future contributors should know
+
+## known gaps / next tasks
+
+- [ ] Task 1
+- [ ] Task 2

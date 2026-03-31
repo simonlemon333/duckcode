@@ -1,0 +1,33 @@
+{
+  "name": "duckcode",
+  "version": "0.1.0",
+  "description": "AI coding agent CLI — self-hosted, works with any OpenAI-compatible backend",
+  "type": "module",
+  "bin": {
+    "duck": "./dist/main.js"
+  },
+  "scripts": {
+    "dev": "tsx src/main.tsx",
+    "build": "tsup src/main.tsx --format esm --out-dir dist --no-splitting",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ink": "^5.0.1",
+    "ink-text-input": "^6.0.0",
+    "react": "^18.3.1",
+    "chalk": "^5.3.0",
+    "glob": "^11.0.0",
+    "minimatch": "^10.0.1",
+    "node-fetch": "^3.3.2",
+    "strip-ansi": "^7.1.0",
+    "commander": "^12.1.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.1",
+    "tsx": "^4.19.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0"
+  }
+}
