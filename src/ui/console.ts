@@ -64,7 +64,7 @@ function formatArgsPreview(input: Record<string, unknown>): string {
 let lineBuffer = ''
 
 export function outputAssistantStart(): void {
-  console.log(`\n${chalk.green.bold('●')} ${chalk.green('Duck')}`)
+  console.log(`\n${chalk.green.bold('●')} ${chalk.green('Duck')}\n`)
 }
 
 /**
@@ -95,7 +95,12 @@ export function streamFinish(): void {
 // ─── Other output ────────────────────────────────────────────────────────────
 
 export function outputUser(text: string): void {
-  console.log(`\n${chalk.blue.bold('❯')} ${text}`)
+  console.log()
+  const lines = text.split('\n')
+  console.log(`${chalk.blue.bold('❯')} ${chalk.white.bold(lines[0])}`)
+  for (const line of lines.slice(1)) {
+    console.log(`  ${chalk.white.bold(line)}`)
+  }
 }
 
 export function printWelcome(): void {
