@@ -86,11 +86,15 @@ function outputLine(line: string): void {
 export function outputToolCall(tc: ToolCallDisplay): void {
   const icon = tc.status === 'done'
     ? chalk.green('✓')
-    : chalk.red('✗')
+    : tc.status === 'running'
+      ? chalk.yellow('⟳')
+      : chalk.red('✗')
 
   const name = tc.status === 'done'
     ? chalk.green(tc.name)
-    : chalk.red(tc.name)
+    : tc.status === 'running'
+      ? chalk.cyan(tc.name)
+      : chalk.red(tc.name)
 
   // Compact args: show key values inline
   const args = formatArgs(tc.input)

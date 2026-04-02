@@ -54,12 +54,19 @@ export interface Tool {
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
+export interface ModelConfig {
+  baseUrl: string
+  apiKey: string
+  model: string
+}
+
 export interface GatewayConfig {
   baseUrl: string
   apiKey: string
   model: string
   maxTokens: number
   mcpServers?: McpServerConfig[]
+  models?: Record<string, ModelConfig>
 }
 
 export interface McpServerConfig {

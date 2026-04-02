@@ -14,11 +14,10 @@ function loadFileConfig(): Partial<GatewayConfig> {
   }
 }
 
-export function loadConfig(): GatewayConfig {
+export function loadConfig(modelName?: string): GatewayConfig {
   const file = loadFileConfig()
-
-  return {
-    // 优先级: ENV > config.json > defaults
+  let config: GatewayConfig = {
+    // 优先级：ENV > config.json > defaults
     baseUrl:
       process.env.DUCK_GATEWAY_URL ??
       file.baseUrl ??
@@ -35,6 +34,19 @@ export function loadConfig(): GatewayConfig {
       Number(process.env.DUCK_MAX_TOKENS ?? file.maxTokens ?? 8192),
     mcpServers: file.mcpServers,
   }
+
+  // 如果传入 modelName，从 models 字典中覆盖配置
+  if (modelName && file.models && file.models[modelName]) {
+    const modelConfig = file.models[modelName]
+    config = {
+      ...config,
+      baseUrl: modelConfig.baseUrl,
+      apiKey: modelConfig.apiKey,
+      model: modelConfig.model,
+    }
+  }
+
+  return config
 }
 
 export function getSystemPrompt(projectContext: string): string {

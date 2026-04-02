@@ -14,12 +14,19 @@ export type StreamEvent =
   | { type: 'error'; message: string }
   | { type: 'permission_request'; id: string; name: string; input: Record<string, unknown> }
   | { type: 'permission_granted'; id: string }
+  | { type: 'choice_request'; title: string; options: Array<{ label: string; value: string; hint?: string }>; customInput: boolean }
+
+export type PermissionResult = {
+  granted: boolean
+  trustAll?: boolean
+  editedInput?: Record<string, unknown>
+}
 
 export type PermissionCallback = (
   id: string,
   name: string,
   input: Record<string, unknown>,
-) => Promise<boolean>
+) => Promise<PermissionResult>
 
 const MAX_TURNS = 30
 
@@ -100,10 +107,12 @@ export class QueryEngine {
         }
 
         // Permission gate
+        let toolInput = tc.input
         if (tool.permission === 'confirm') {
           yield { type: 'permission_request', id: tc.id, name: tc.name, input: tc.input }
-          const granted = await onPermission(tc.id, tc.name, tc.input)
-          if (!granted) {
+          const permResult = await onPermission(tc.id, tc.name, tc.input)
+
+          if (!permResult.granted) {
             toolResults.push({
               type: 'tool_result',
               tool_use_id: tc.id,
@@ -114,9 +123,12 @@ export class QueryEngine {
             continue
           }
           yield { type: 'permission_granted', id: tc.id }
+
+          // If input was edited, use the edited version
+          if (permResult.editedInput) toolInput = permResult.editedInput
         }
 
-        const result = await tool.execute(tc.input, cwd)
+        const result = await tool.execute(toolInput, cwd)
         yield {
           type: 'tool_done',
           id: tc.id,

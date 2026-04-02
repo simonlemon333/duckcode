@@ -3,6 +3,7 @@ import { cwd as processCwd } from 'process'
 import { resolve, basename } from 'path'
 import { glob } from 'glob'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
+import chalk from 'chalk'
 
 import { loadConfig, getSystemPrompt } from './config.js'
 import { QueryEngine } from './query/engine.js'
@@ -16,8 +17,8 @@ import {
   outputToolCall,
   outputError,
 } from './ui/console.js'
-import { startInput, setIdle, showPermission, stopInput, stopSpinner } from './ui/input.js'
-import type { PermissionCallback } from './query/engine.js'
+import { startInput, setIdle, showPermission, stopInput, stopSpinner, startSpinner } from './ui/input.js'
+import type { PermissionCallback, PermissionResult } from './query/engine.js'
 
 // ── Register all tools (side-effect imports) ──────────────────────────────────
 import './tools/bash.js'
@@ -34,6 +35,7 @@ program
   .description('Duck — AI coding assistant')
   .version('0.1.0')
   .option('-d, --dir <path>', 'Working directory', '.')
+  .option('--model <name>', 'Model name to use (from models config)')
   .parse()
 
 const opts = program.opts()
@@ -41,18 +43,52 @@ const workDir = resolve(processCwd(), opts.dir as string)
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
-const config = loadConfig()
+const config = loadConfig(opts.model)
 const projectContext = loadProjectContext(workDir)
 const systemPrompt = getSystemPrompt(projectContext)
 const engine = new QueryEngine(config, systemPrompt)
 
+console.log(`🦆 Using model: ${config.model}`)
+
 // Track tool calls per assistant turn
 let pendingTools = new Map<string, { name: string; input: Record<string, unknown> }>()
+
+// Trust list: tools that don't require confirmation in current session
+const trustedTools = new Set<string>()
 
 // ── Permission callback ─────────────────────────────────────────────────────
 
 const handlePermission: PermissionCallback = async (id, name, input) => {
-  return showPermission(name, input)
+  // Check trusted tools first - skip prompt if trusted
+  if (trustedTools.has(name)) {
+    console.log(chalk.dim(`  ✓ 工具 "${name}" 已信任，跳过确认`))
+    return { granted: true }
+  }
+
+  const menuResult = await showPermission(name, input)
+
+  // Map menu selection to PermissionResult
+  if (menuResult.value === 'trust') {
+    trustedTools.add(name)
+    console.log(chalk.green(`  ✓ 已将 "${name}" 加入本次会话的信任列表`))
+    return { granted: true, trustAll: true }
+  }
+
+  if (menuResult.value === 'edit' && menuResult.customInput) {
+    try {
+      const editedInput = JSON.parse(menuResult.customInput)
+      return { granted: true, editedInput }
+    } catch {
+      console.log(chalk.red('  ✗ JSON 解析失败，使用原始参数'))
+      return { granted: true }
+    }
+  }
+
+  if (menuResult.value === 'allow') {
+    return { granted: true }
+  }
+
+  return { granted: false }
 }
 
 // ── Submit handler ──────────────────────────────────────────────────────────
@@ -74,8 +110,8 @@ async function handleSubmit(text: string): Promise<void> {
   }
 
   outputUser(text)
-  setIdle(false)
   outputAssistantStart()
+  setIdle(false)
   pendingTools = new Map()
 
   for await (const event of engine.run(text, workDir, handlePermission)) {
@@ -88,6 +124,14 @@ async function handleSubmit(text: string): Promise<void> {
       case 'tool_start':
         stopSpinner()
         pendingTools.set(event.id, { name: event.name, input: event.input })
+        outputToolCall({
+          id: event.id,
+          name: event.name,
+          input: event.input,
+          status: 'running',
+          output: '',
+        })
+        startSpinner()
         break
 
       case 'tool_done': {
