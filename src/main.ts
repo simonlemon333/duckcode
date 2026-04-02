@@ -5,7 +5,7 @@ import { glob } from 'glob'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import chalk from 'chalk'
 
-import { loadConfig, getSystemPrompt } from './config.js'
+import { loadConfig } from './config.js'
 import { QueryEngine } from './query/engine.js'
 import { loadProjectContext } from './memory/context.js'
 import {
@@ -45,8 +45,7 @@ const workDir = resolve(processCwd(), opts.dir as string)
 
 const config = loadConfig(opts.model)
 const projectContext = loadProjectContext(workDir)
-const systemPrompt = getSystemPrompt(projectContext)
-const engine = new QueryEngine(config, systemPrompt)
+const engine = new QueryEngine(config, projectContext)
 
 console.log(`🦆 Using model: ${config.model}`)
 

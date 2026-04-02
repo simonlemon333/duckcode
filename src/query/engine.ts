@@ -5,6 +5,7 @@ import type {
   GatewayConfig,
 } from '../types.js'
 import { getTool, getToolDefinitions } from '../tools/registry.js'
+import { getStaticSystemPrompt, getDynamicContext } from '../config.js'
 
 export type StreamEvent =
   | { type: 'text_delta'; delta: string }
@@ -33,11 +34,11 @@ const MAX_TURNS = 30
 export class QueryEngine {
   private history: Message[] = []
   private config: GatewayConfig
-  private systemPrompt: string
+  private projectContext: string
 
-  constructor(config: GatewayConfig, systemPrompt: string) {
+  constructor(config: GatewayConfig, projectContext: string) {
     this.config = config
-    this.systemPrompt = systemPrompt
+    this.projectContext = projectContext
   }
 
   /**
@@ -169,8 +170,28 @@ export class QueryEngine {
     }))
 
     // Convert history to OpenAI format
+    // 拆分 system prompt：静态部分（可缓存）+ 动态部分
+    const staticPrompt = getStaticSystemPrompt()
+    const dynamicPrompt = getDynamicContext(this.projectContext)
+
+    const systemMessages = [
+      {
+        role: 'system',
+        content: staticPrompt,
+        cache_control: { type: 'ephemeral' }, // 让 API 缓存静态部分
+      } as any,
+    ]
+    
+    // 如果动态上下文存在，作为第二条 system message（API 会合并处理）
+    if (dynamicPrompt) {
+      systemMessages.push({
+        role: 'system',
+        content: dynamicPrompt,
+      } as any)
+    }
+
     const messages = [
-      { role: 'system', content: this.systemPrompt },
+      ...systemMessages,
       ...this.history.map(m => {
         if (typeof m.content === 'string') {
           return { role: m.role, content: m.content }

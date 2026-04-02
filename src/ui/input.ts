@@ -247,53 +247,51 @@ export function startInput(
   process.stdin.setEncoding('utf-8')
 
   process.stdin.on('data', (data: string) => {
-    for (const ch of data) {
-      // ── Menu mode ────────────────────────────────────────────────────
-      if (menuMode) {
-        if (ch === '\x1b') { // ESC
-          cancelMenu()
-          continue
+    // ── Menu mode: handle full data chunk for arrow key sequences ────
+    if (menuMode) {
+      if (data === '\x1b' || data === 'q') { // ESC or q to cancel
+        cancelMenu()
+        return
+      }
+      if (data === '\r' || data === '\n') { // Enter
+        if (menuHasCustomInput && menuSelectedIndex === menuOptions.length) {
+          menuCustomInput = customInputBuffer
+          startCustomInput()
+        } else {
+          submitMenu()
         }
-        if (ch === '\r' || ch === '\n') { // Enter
+        return
+      }
+      if (data === '\x1b[A' || data === 'k') { // Up arrow or k
+        menuSelectedIndex = Math.max(0, menuSelectedIndex - 1)
+        renderMenu()
+        return
+      }
+      if (data === '\x1b[B' || data === 'j') { // Down arrow or j
+        const maxIndex = menuHasCustomInput ? menuOptions.length : menuOptions.length - 1
+        menuSelectedIndex = Math.min(maxIndex, menuSelectedIndex + 1)
+        renderMenu()
+        return
+      }
+      // Numeric shortcuts 1-9
+      const num = parseInt(data)
+      if (!isNaN(num) && num >= 1 && num <= 9) {
+        const maxIndex = menuHasCustomInput ? menuOptions.length : menuOptions.length - 1
+        const target = num - 1
+        if (target >= 0 && target <= maxIndex) {
+          menuSelectedIndex = target
           if (menuHasCustomInput && menuSelectedIndex === menuOptions.length) {
-            // Switch to custom input mode
-            menuCustomInput = customInputBuffer
             startCustomInput()
-            continue
           } else {
             submitMenu()
-            continue
           }
         }
-        if (ch === 'k' || ch === '\x1b[A') { // Up arrow (k or CSI A)
-          menuSelectedIndex = Math.max(0, menuSelectedIndex - 1)
-          renderMenu()
-          continue
-        }
-        if (ch === 'j' || ch === '\x1b[B') { // Down arrow (j or CSI B)
-          const maxIndex = menuHasCustomInput ? menuOptions.length : menuOptions.length - 1
-          menuSelectedIndex = Math.min(maxIndex, menuSelectedIndex + 1)
-          renderMenu()
-          continue
-        }
-        // Numeric shortcuts 1-9
-        const num = parseInt(ch)
-        if (!isNaN(num) && num >= 1 && num <= 9) {
-          const maxIndex = menuHasCustomInput ? menuOptions.length : menuOptions.length - 1
-          const target = num - 1
-          if (target >= 0 && target <= maxIndex) {
-            menuSelectedIndex = target
-            if (menuHasCustomInput && menuSelectedIndex === menuOptions.length) {
-              startCustomInput()
-            } else {
-              submitMenu()
-            }
-          }
-          continue
-        }
-        continue
+        return
       }
+      return
+    }
 
+    for (const ch of data) {
       // ── Custom input mode ───────────────────────────────────────────
       if (customInputMode) {
         // For custom input during menu

@@ -49,7 +49,8 @@ export function loadConfig(modelName?: string): GatewayConfig {
   return config
 }
 
-export function getSystemPrompt(projectContext: string): string {
+// 静态部分：角色定义、tool_usage、communication 规则（固定不变）
+export function getStaticSystemPrompt(): string {
   return `You are Duck, an expert AI coding assistant.
 You help developers write, read, edit, and debug code through a set of tools.
 
@@ -73,7 +74,20 @@ You help developers write, read, edit, and debug code through a set of tools.
 - Show your work: briefly explain what you're doing and why
 - If a task is ambiguous, ask one clarifying question before proceeding
 - Respond in the same language the user writes in (Chinese or English)
-</communication>
+</communication>`.trim()
+}
 
-${projectContext ? `<project_context>\n${projectContext}\n</project_context>` : ''}`.trim()
+// 动态部分：project_context（每次可能变化）
+export function getDynamicContext(projectContext: string): string | null {
+  if (!projectContext) return null
+  return `<project_context>
+${projectContext}
+</project_context>`
+}
+
+// 兼容旧接口：将静态和动态部分拼接
+export function getSystemPrompt(projectContext: string): string {
+  const staticPart = getStaticSystemPrompt()
+  const dynamicPart = getDynamicContext(projectContext)
+  return dynamicPart ? `${staticPart}\n\n${dynamicPart}`.trim() : staticPart
 }
