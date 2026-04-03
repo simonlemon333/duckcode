@@ -7,6 +7,7 @@ import chalk from 'chalk'
 
 import { loadConfig, hasConfig } from './config.js'
 import { loadSkills, resolveSlashCommand, getAllSkills } from './skills/loader.js'
+import { initHooks, listHooks } from './skills/hooks.js'
 import { QueryEngine } from './query/engine.js'
 import { loadProjectContext } from './memory/context.js'
 import {
@@ -61,8 +62,9 @@ const config = loadConfig(opts.model)
 const projectContext = loadProjectContext(workDir)
 const engine = new QueryEngine(config, projectContext)
 
-// Load skills
+// Load skills and hooks
 loadSkills(workDir)
+initHooks(workDir)
 
 // Track tool calls per assistant turn
 let pendingTools = new Map<string, { name: string; input: Record<string, unknown> }>()
@@ -109,6 +111,35 @@ const handlePermission: PermissionCallback = async (id, name, input) => {
 
 async function handleSubmit(rawText: string): Promise<void> {
   let text = rawText
+  // /help
+  if (text.toLowerCase() === '/help') {
+    console.log(chalk.cyan.bold('\n  🦆 DuckCode Commands\n'))
+    console.log(`  ${chalk.cyan('/help')}     ${chalk.dim('— Show this help')}`)
+    console.log(`  ${chalk.cyan('/clear')}    ${chalk.dim('— Reset conversation history')}`)
+    console.log(`  ${chalk.cyan('/init')}     ${chalk.dim('— Generate DUCK.md from project')}`)
+    console.log(`  ${chalk.cyan('/skills')}   ${chalk.dim('— List available skills')}`)
+
+    const skills = getAllSkills()
+    if (skills.length > 0) {
+      console.log(chalk.cyan.bold('\n  Skills:\n'))
+      for (const s of skills) {
+        console.log(`  ${chalk.cyan('/' + s.name)}${s.description ? chalk.dim(' — ' + s.description) : ''}`)
+      }
+    }
+
+    const hooks = listHooks()
+    if (hooks.length > 0) {
+      console.log(chalk.cyan.bold('\n  Hooks:\n'))
+      for (const h of hooks) {
+        console.log(`  ${chalk.dim(h.source + '/')}${chalk.white(h.name)}`)
+      }
+    }
+
+    console.log()
+    setIdle(true)
+    return
+  }
+
   // /clear
   if (text.toLowerCase() === '/clear') {
     engine.clearHistory()

@@ -7,6 +7,7 @@ import type {
 import { getTool, getToolDefinitions } from '../tools/registry.js'
 import { getStaticSystemPrompt, getDynamicContext } from '../config.js'
 import { compressIfNeeded } from './compress.js'
+import { runPreHooks, runPostHooks } from '../skills/hooks.js'
 
 export type StreamEvent =
   | { type: 'text_delta'; delta: string }
@@ -139,7 +140,25 @@ export class QueryEngine {
           if (permResult.editedInput) toolInput = permResult.editedInput
         }
 
+        // Pre-hook
+        const hookResult = await runPreHooks(tc.name, toolInput, cwd)
+        if (hookResult.blocked) {
+          const msg = hookResult.message ?? 'Blocked by pre-hook'
+          toolResults.push({
+            type: 'tool_result',
+            tool_use_id: tc.id,
+            content: msg,
+            is_error: true,
+          })
+          yield { type: 'tool_done', id: tc.id, name: tc.name, output: msg, is_error: true }
+          continue
+        }
+
         const result = await tool.execute(toolInput, cwd)
+
+        // Post-hook (fire-and-forget)
+        runPostHooks(tc.name, toolInput, result.output, result.is_error, cwd)
+
         yield {
           type: 'tool_done',
           id: tc.id,
