@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs'
 import chalk from 'chalk'
 
 import { loadConfig, hasConfig } from './config.js'
+import { setupProxy } from './proxy.js'
 import { loadSkills, resolveSlashCommand, getAllSkills } from './skills/loader.js'
 import { initHooks, listHooks } from './skills/hooks.js'
 import { QueryEngine } from './query/engine.js'
@@ -38,6 +39,7 @@ program
   .version('0.1.0')
   .option('-d, --dir <path>', 'Working directory', '.')
   .option('--model <name>', 'Model name to use (from models config)')
+  .option('--proxy <url>', 'HTTP/HTTPS proxy URL')
   .parse()
 
 const opts = program.opts()
@@ -57,6 +59,10 @@ if (!hasConfig()) {
   console.log(chalk.dim('\n  Works with any OpenAI-compatible API (LiteLLM, vLLM, Ollama, etc.)\n'))
   process.exit(0)
 }
+
+// Proxy setup (must be before any fetch calls)
+const proxyUrl = await setupProxy(opts.proxy as string | undefined)
+if (proxyUrl) console.log(chalk.dim(`  Proxy: ${proxyUrl}`))
 
 const config = loadConfig(opts.model)
 const projectContext = loadProjectContext(workDir)
