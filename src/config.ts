@@ -5,6 +5,12 @@ import type { GatewayConfig } from './types.js'
 
 const CONFIG_PATH = join(homedir(), '.duck', 'config.json')
 
+export function hasConfig(): boolean {
+  if (existsSync(CONFIG_PATH)) return true
+  if (process.env.DUCK_GATEWAY_URL || process.env.DUCK_API_KEY) return true
+  return false
+}
+
 function loadFileConfig(): Partial<GatewayConfig> {
   if (!existsSync(CONFIG_PATH)) return {}
   try {

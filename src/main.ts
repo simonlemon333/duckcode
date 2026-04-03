@@ -5,7 +5,7 @@ import { glob } from 'glob'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import chalk from 'chalk'
 
-import { loadConfig } from './config.js'
+import { loadConfig, hasConfig } from './config.js'
 import { QueryEngine } from './query/engine.js'
 import { loadProjectContext } from './memory/context.js'
 import {
@@ -43,11 +43,22 @@ const workDir = resolve(processCwd(), opts.dir as string)
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
+if (!hasConfig()) {
+  console.log(chalk.cyan.bold('\n  🦆 Welcome to DuckCode!\n'))
+  console.log(chalk.white('  No config found. Create ~/.duck/config.json:\n'))
+  console.log(chalk.dim('  {'))
+  console.log(chalk.dim('    "baseUrl": "') + chalk.white('https://your-api-endpoint.com') + chalk.dim('",'))
+  console.log(chalk.dim('    "apiKey": "') + chalk.white('your-key') + chalk.dim('",'))
+  console.log(chalk.dim('    "model": "') + chalk.white('your-model') + chalk.dim('"'))
+  console.log(chalk.dim('  }\n'))
+  console.log(chalk.white('  Or set env vars: ') + chalk.cyan('DUCK_GATEWAY_URL') + chalk.dim(', ') + chalk.cyan('DUCK_API_KEY') + chalk.dim(', ') + chalk.cyan('DUCK_MODEL'))
+  console.log(chalk.dim('\n  Works with any OpenAI-compatible API (LiteLLM, vLLM, Ollama, etc.)\n'))
+  process.exit(0)
+}
+
 const config = loadConfig(opts.model)
 const projectContext = loadProjectContext(workDir)
 const engine = new QueryEngine(config, projectContext)
-
-console.log(`🦆 Using model: ${config.model}`)
 
 // Track tool calls per assistant turn
 let pendingTools = new Map<string, { name: string; input: Record<string, unknown> }>()
