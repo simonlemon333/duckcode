@@ -6,6 +6,7 @@ import type {
 } from '../types.js'
 import { getTool, getToolDefinitions } from '../tools/registry.js'
 import { getStaticSystemPrompt, getDynamicContext } from '../config.js'
+import { compressIfNeeded } from './compress.js'
 
 export type StreamEvent =
   | { type: 'text_delta'; delta: string }
@@ -54,6 +55,15 @@ export class QueryEngine {
     this.history.push({ role: 'user', content: userMessage })
 
     for (let turn = 0; turn < MAX_TURNS; turn++) {
+      // ── Compress history if too long ──────────────────────────────────────
+      const compressResult = await compressIfNeeded(this.history, this.config)
+      if (compressResult.compressed) {
+        yield {
+          type: 'text_delta',
+          delta: `\n[Context compressed: ${compressResult.oldTokens} → ${compressResult.newTokens} tokens]\n`,
+        }
+      }
+
       // ── Call LLM ──────────────────────────────────────────────────────────
       let assistantText = ''
       const toolCalls: ToolUseContent[] = []
@@ -174,21 +184,14 @@ export class QueryEngine {
     const staticPrompt = getStaticSystemPrompt()
     const dynamicPrompt = getDynamicContext(this.projectContext)
 
+    // Combine system prompt — cache_control only if provider supports it
+    const fullSystemPrompt = dynamicPrompt
+      ? `${staticPrompt}\n\n${dynamicPrompt}`
+      : staticPrompt
+
     const systemMessages = [
-      {
-        role: 'system',
-        content: staticPrompt,
-        cache_control: { type: 'ephemeral' }, // 让 API 缓存静态部分
-      } as any,
+      { role: 'system', content: fullSystemPrompt },
     ]
-    
-    // 如果动态上下文存在，作为第二条 system message（API 会合并处理）
-    if (dynamicPrompt) {
-      systemMessages.push({
-        role: 'system',
-        content: dynamicPrompt,
-      } as any)
-    }
 
     const messages = [
       ...systemMessages,
