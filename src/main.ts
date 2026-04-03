@@ -6,6 +6,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs'
 import chalk from 'chalk'
 
 import { loadConfig, hasConfig } from './config.js'
+import { loadSkills, resolveSlashCommand, getAllSkills } from './skills/loader.js'
 import { QueryEngine } from './query/engine.js'
 import { loadProjectContext } from './memory/context.js'
 import {
@@ -60,6 +61,9 @@ const config = loadConfig(opts.model)
 const projectContext = loadProjectContext(workDir)
 const engine = new QueryEngine(config, projectContext)
 
+// Load skills
+loadSkills(workDir)
+
 // Track tool calls per assistant turn
 let pendingTools = new Map<string, { name: string; input: Record<string, unknown> }>()
 
@@ -103,7 +107,8 @@ const handlePermission: PermissionCallback = async (id, name, input) => {
 
 // ── Submit handler ──────────────────────────────────────────────────────────
 
-async function handleSubmit(text: string): Promise<void> {
+async function handleSubmit(rawText: string): Promise<void> {
+  let text = rawText
   // /clear
   if (text.toLowerCase() === '/clear') {
     engine.clearHistory()
@@ -117,6 +122,34 @@ async function handleSubmit(text: string): Promise<void> {
     await runInit(workDir)
     setIdle(true)
     return
+  }
+
+  // /skills — list available skills
+  if (text.toLowerCase() === '/skills') {
+    const skills = getAllSkills()
+    if (skills.length === 0) {
+      console.log(chalk.dim('\n  No skills found. Add .md files to .duck/skills/ or ~/.duck/skills/\n'))
+    } else {
+      console.log(chalk.cyan.bold('\n  Available skills:\n'))
+      for (const s of skills) {
+        console.log(`  ${chalk.cyan('/' + s.name)}${s.description ? chalk.dim(' — ' + s.description) : ''}`)
+      }
+      console.log()
+    }
+    setIdle(true)
+    return
+  }
+
+  // Slash command → skill
+  const skillMatch = resolveSlashCommand(text)
+  if (skillMatch) {
+    const { skill, args } = skillMatch
+    // Inject skill prompt + user args as the message
+    const prompt = args
+      ? `${skill.prompt}\n\n---\nUser input: ${args}`
+      : skill.prompt
+    text = prompt
+    console.log(chalk.dim(`  ⚡ Running skill: ${skill.name}`))
   }
 
   outputUser(text)
