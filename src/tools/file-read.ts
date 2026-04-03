@@ -19,6 +19,10 @@ interface FileCache {
 
 const cache = new Map<string, FileCache>()
 
+export function clearFileCache(): void {
+  cache.clear()
+}
+
 function hashContent(content: string): string {
   return createHash('md5').update(content).digest('hex').slice(0, 12)
 }

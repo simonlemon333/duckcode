@@ -27,6 +27,7 @@ import type { PermissionCallback, PermissionResult } from './query/engine.js'
 // ── Register all tools (side-effect imports) ──────────────────────────────────
 import './tools/bash.js'
 import './tools/file-read.js'
+import { clearFileCache } from './tools/file-read.js'
 import './tools/file-write.js'
 import './tools/glob-grep.js'
 import './tools/web-fetch.js'
@@ -34,10 +35,13 @@ import { initializeMcpTools, cleanupMcpConnections } from './tools/mcp.js'
 
 // ─── CLI entry point ──────────────────────────────────────────────────────────
 
+// Read version from package.json at build time (tsup inlines it)
+const VERSION = '0.1.2'
+
 program
-  .name('duck')
-  .description('Duck — AI coding assistant')
-  .version('0.1.0')
+  .name('duckcode')
+  .description('DuckCode — AI coding agent for your terminal')
+  .version(VERSION)
   .option('-d, --dir <path>', 'Working directory', '.')
   .option('--model <name>', 'Model name to use (from models config)')
   .option('--proxy <url>', 'HTTP/HTTPS proxy URL')
@@ -119,6 +123,13 @@ const handlePermission: PermissionCallback = async (id, name, input) => {
 
 async function handleSubmit(rawText: string): Promise<void> {
   let text = rawText
+  // /version
+  if (text.toLowerCase() === '/version') {
+    console.log(chalk.dim(`\n  duckcode v${VERSION} · ${config.model}\n`))
+    setIdle(true)
+    return
+  }
+
   // /help
   if (text.toLowerCase() === '/help') {
     console.log(chalk.cyan.bold('\n  🦆 DuckCode Commands\n'))
@@ -151,7 +162,8 @@ async function handleSubmit(rawText: string): Promise<void> {
   // /clear
   if (text.toLowerCase() === '/clear') {
     engine.clearHistory()
-    console.log('\n✓ Conversation cleared.\n')
+    clearFileCache()
+    console.log('\n✓ Conversation and file cache cleared.\n')
     setIdle(true)
     return
   }
@@ -251,6 +263,17 @@ async function handleSubmit(rawText: string): Promise<void> {
 // ─── Start ───────────────────────────────────────────────────────────────────
 
 printWelcome()
+
+const skills = getAllSkills()
+const hooks = listHooks()
+const startupInfo = [
+  `v${VERSION}`,
+  config.model,
+  skills.length > 0 ? `${skills.length} skills` : null,
+  hooks.length > 0 ? `${hooks.length} hooks` : null,
+].filter(Boolean).join(' · ')
+console.log(chalk.dim(`  ${startupInfo}\n`))
+
 initializeMcpTools().catch(console.error)
 startInput(workDir, handleSubmit)
 
