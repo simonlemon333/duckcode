@@ -38,6 +38,7 @@ export function loadConfig(modelName?: string): GatewayConfig {
       'gpt-4o',
     maxTokens:
       Number(process.env.DUCK_MAX_TOKENS ?? file.maxTokens ?? 8192),
+    agentName: file.agentName,
     mcpServers: file.mcpServers,
   }
 
@@ -56,8 +57,13 @@ export function loadConfig(modelName?: string): GatewayConfig {
 }
 
 // 静态部分：角色定义、tool_usage、communication 规则（固定不变）
-export function getStaticSystemPrompt(): string {
-  return `You are Duck, an expert AI coding assistant.
+export function getAgentName(config?: GatewayConfig): string {
+  return config?.agentName ?? 'Duck'
+}
+
+export function getStaticSystemPrompt(config?: GatewayConfig): string {
+  const name = getAgentName(config)
+  return `You are ${name}, an expert AI coding assistant.
 You help developers write, read, edit, and debug code through a set of tools.
 
 <environment>

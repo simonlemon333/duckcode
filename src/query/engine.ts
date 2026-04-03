@@ -200,7 +200,7 @@ export class QueryEngine {
 
     // Convert history to OpenAI format
     // 拆分 system prompt：静态部分（可缓存）+ 动态部分
-    const staticPrompt = getStaticSystemPrompt()
+    const staticPrompt = getStaticSystemPrompt(this.config)
     const dynamicPrompt = getDynamicContext(this.projectContext)
 
     // Combine system prompt — cache_control only if provider supports it
@@ -389,9 +389,11 @@ export class QueryEngine {
           }
         }
 
-        // When finish_reason = tool_calls, emit all pending tool calls
-        if (chunk.choices?.[0]?.finish_reason === 'tool_calls') {
+        // Emit pending tool calls on finish_reason (tool_calls OR stop fallback)
+        const finishReason = chunk.choices?.[0]?.finish_reason
+        if (finishReason && Object.keys(pendingToolCalls).length > 0) {
           for (const [, pending] of Object.entries(pendingToolCalls)) {
+            if (!pending.name) continue // Skip incomplete tool calls
             let parsedInput: Record<string, unknown> = {}
             try {
               parsedInput = JSON.parse(pending.args)
@@ -405,6 +407,25 @@ export class QueryEngine {
               input: parsedInput,
             }
           }
+        }
+      }
+    }
+
+    // Fallback: emit any remaining pending tool calls at stream end
+    if (Object.keys(pendingToolCalls).length > 0) {
+      for (const [, pending] of Object.entries(pendingToolCalls)) {
+        if (!pending.name) continue
+        let parsedInput: Record<string, unknown> = {}
+        try {
+          parsedInput = JSON.parse(pending.args)
+        } catch {
+          parsedInput = { _raw: pending.args }
+        }
+        yield {
+          type: 'tool_start',
+          id: pending.id,
+          name: pending.name,
+          input: parsedInput,
         }
       }
     }

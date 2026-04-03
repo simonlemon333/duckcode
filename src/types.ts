@@ -65,6 +65,7 @@ export interface GatewayConfig {
   apiKey: string
   model: string
   maxTokens: number
+  agentName?: string
   mcpServers?: McpServerConfig[]
   models?: Record<string, ModelConfig>
 }
