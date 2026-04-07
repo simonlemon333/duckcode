@@ -9,8 +9,9 @@
  */
 
 import { readFileSync, existsSync, readdirSync } from 'fs'
-import { join, basename } from 'path'
+import { join, basename, dirname } from 'path'
 import { homedir } from 'os'
+import { fileURLToPath } from 'url'
 
 export interface Skill {
   name: string
@@ -76,15 +77,39 @@ let loadedSkills: Skill[] = []
  * Discover and load skills from project (.duck/skills/) and global (~/.duck/skills/).
  * Project skills override global skills with the same name.
  */
+/**
+ * Locate the bundled examples/skills/ directory.
+ * Works in both dev (tsx src/main.ts) and built (dist/main.js) modes.
+ */
+function findBundledSkillsDir(): string | null {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url))
+    // Walk up looking for examples/skills/ — handles src/skills/ and dist/ layouts
+    for (const candidate of [
+      join(here, '..', '..', 'examples', 'skills'),
+      join(here, '..', 'examples', 'skills'),
+      join(here, '..', '..', '..', 'examples', 'skills'),
+    ]) {
+      if (existsSync(candidate)) return candidate
+    }
+  } catch {
+    // import.meta.url not available
+  }
+  return null
+}
+
 export function loadSkills(cwd: string): void {
+  const bundledDir = findBundledSkillsDir()
   const globalDir = join(homedir(), '.duck', 'skills')
   const projectDir = join(cwd, '.duck', 'skills')
 
+  // Precedence: bundled (lowest) → global → project (highest)
+  const bundledSkills = bundledDir ? loadSkillsFromDir(bundledDir) : []
   const globalSkills = loadSkillsFromDir(globalDir)
   const projectSkills = loadSkillsFromDir(projectDir)
 
-  // Project skills override global by name
   const byName = new Map<string, Skill>()
+  for (const s of bundledSkills) byName.set(s.name, s)
   for (const s of globalSkills) byName.set(s.name, s)
   for (const s of projectSkills) byName.set(s.name, s)
 

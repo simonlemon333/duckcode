@@ -25,22 +25,23 @@ let inCodeBlock = false
 let codeBlockLang = ''
 
 function outputLine(line: string): void {
-  // Code block fence
+  // Code block fence — minimal, CC-style: dim language label + thin left bar
   if (line.startsWith('```')) {
     if (!inCodeBlock) {
       inCodeBlock = true
       codeBlockLang = line.slice(3).trim()
-      console.log(chalk.dim(`  ┌─ ${codeBlockLang || 'code'} ${'─'.repeat(Math.max(0, 40 - (codeBlockLang || 'code').length))}`))
+      if (codeBlockLang) {
+        console.log(chalk.dim(`  ${codeBlockLang}`))
+      }
     } else {
       inCodeBlock = false
       codeBlockLang = ''
-      console.log(chalk.dim('  └' + '─'.repeat(44)))
     }
     return
   }
 
   if (inCodeBlock) {
-    console.log(chalk.dim('  │ ') + chalk.white(line))
+    console.log(chalk.dim('  ▎') + ' ' + chalk.white(line))
     return
   }
 
