@@ -5,11 +5,15 @@ import { glob } from 'glob'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import chalk from 'chalk'
 
-import { loadConfig } from './config.js'
+import { loadConfig, hasConfig } from './config.js'
+import { setupProxy } from './proxy.js'
+import { loadSkills, resolveSlashCommand, getAllSkills } from './skills/loader.js'
+import { initHooks, listHooks } from './skills/hooks.js'
 import { QueryEngine } from './query/engine.js'
 import { loadProjectContext } from './memory/context.js'
 import {
   printWelcome,
+  setAgentName,
   outputUser,
   outputAssistantStart,
   streamText,
@@ -23,6 +27,7 @@ import type { PermissionCallback, PermissionResult } from './query/engine.js'
 // ── Register all tools (side-effect imports) ──────────────────────────────────
 import './tools/bash.js'
 import './tools/file-read.js'
+import { clearFileCache } from './tools/file-read.js'
 import './tools/file-write.js'
 import './tools/glob-grep.js'
 import './tools/web-fetch.js'
@@ -30,12 +35,16 @@ import { initializeMcpTools, cleanupMcpConnections } from './tools/mcp.js'
 
 // ─── CLI entry point ──────────────────────────────────────────────────────────
 
+// Read version from package.json at build time (tsup inlines it)
+const VERSION = '0.1.2'
+
 program
-  .name('duck')
-  .description('Duck — AI coding assistant')
-  .version('0.1.0')
+  .name('duckcode')
+  .description('DuckCode — AI coding agent for your terminal')
+  .version(VERSION)
   .option('-d, --dir <path>', 'Working directory', '.')
   .option('--model <name>', 'Model name to use (from models config)')
+  .option('--proxy <url>', 'HTTP/HTTPS proxy URL')
   .parse()
 
 const opts = program.opts()
@@ -43,11 +52,31 @@ const workDir = resolve(processCwd(), opts.dir as string)
 
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
+if (!hasConfig()) {
+  console.log(chalk.cyan.bold('\n  🦆 Welcome to DuckCode!\n'))
+  console.log(chalk.white('  No config found. Create ~/.duck/config.json:\n'))
+  console.log(chalk.dim('  {'))
+  console.log(chalk.dim('    "baseUrl": "') + chalk.white('https://your-api-endpoint.com') + chalk.dim('",'))
+  console.log(chalk.dim('    "apiKey": "') + chalk.white('your-key') + chalk.dim('",'))
+  console.log(chalk.dim('    "model": "') + chalk.white('your-model') + chalk.dim('"'))
+  console.log(chalk.dim('  }\n'))
+  console.log(chalk.white('  Or set env vars: ') + chalk.cyan('DUCK_GATEWAY_URL') + chalk.dim(', ') + chalk.cyan('DUCK_API_KEY') + chalk.dim(', ') + chalk.cyan('DUCK_MODEL'))
+  console.log(chalk.dim('\n  Works with any OpenAI-compatible API (LiteLLM, vLLM, Ollama, etc.)\n'))
+  process.exit(0)
+}
+
+// Proxy setup (must be before any fetch calls)
+const proxyUrl = await setupProxy(opts.proxy as string | undefined)
+if (proxyUrl) console.log(chalk.dim(`  Proxy: ${proxyUrl}`))
+
 const config = loadConfig(opts.model)
+if (config.agentName) setAgentName(config.agentName)
 const projectContext = loadProjectContext(workDir)
 const engine = new QueryEngine(config, projectContext)
 
-console.log(`🦆 Using model: ${config.model}`)
+// Load skills and hooks
+loadSkills(workDir)
+initHooks(workDir)
 
 // Track tool calls per assistant turn
 let pendingTools = new Map<string, { name: string; input: Record<string, unknown> }>()
@@ -92,20 +121,87 @@ const handlePermission: PermissionCallback = async (id, name, input) => {
 
 // ── Submit handler ──────────────────────────────────────────────────────────
 
-async function handleSubmit(text: string): Promise<void> {
-  // /clear
-  if (text.toLowerCase() === '/clear') {
-    engine.clearHistory()
-    console.log('\n✓ Conversation cleared.\n')
+async function handleSubmit(rawText: string): Promise<void> {
+  let text = rawText
+  // /version
+  if (text.toLowerCase() === '/version') {
+    console.log(chalk.dim(`\n  duckcode v${VERSION} · ${config.model}\n`))
     setIdle(true)
     return
   }
 
-  // /init
-  if (text.toLowerCase() === '/init') {
-    await runInit(workDir)
+  // /help
+  if (text.toLowerCase() === '/help') {
+    console.log(chalk.cyan.bold('\n  🦆 DuckCode Commands\n'))
+    console.log(`  ${chalk.cyan('/help')}     ${chalk.dim('— Show this help')}`)
+    console.log(`  ${chalk.cyan('/clear')}    ${chalk.dim('— Reset conversation history')}`)
+    console.log(`  ${chalk.cyan('/init')}     ${chalk.dim('— Generate DUCK.md from project')}`)
+    console.log(`  ${chalk.cyan('/skills')}   ${chalk.dim('— List available skills')}`)
+
+    const skills = getAllSkills()
+    if (skills.length > 0) {
+      console.log(chalk.cyan.bold('\n  Skills:\n'))
+      for (const s of skills) {
+        console.log(`  ${chalk.cyan('/' + s.name)}${s.description ? chalk.dim(' — ' + s.description) : ''}`)
+      }
+    }
+
+    const hooks = listHooks()
+    if (hooks.length > 0) {
+      console.log(chalk.cyan.bold('\n  Hooks:\n'))
+      for (const h of hooks) {
+        console.log(`  ${chalk.dim(h.source + '/')}${chalk.white(h.name)}`)
+      }
+    }
+
+    console.log()
     setIdle(true)
     return
+  }
+
+  // /clear
+  if (text.toLowerCase() === '/clear') {
+    engine.clearHistory()
+    clearFileCache()
+    console.log('\n✓ Conversation and file cache cleared.\n')
+    setIdle(true)
+    return
+  }
+
+  // /init [--force]
+  if (text.toLowerCase().startsWith('/init')) {
+    const force = text.includes('--force')
+    await runInit(workDir, force)
+    setIdle(true)
+    return
+  }
+
+  // /skills — list available skills
+  if (text.toLowerCase() === '/skills') {
+    const skills = getAllSkills()
+    if (skills.length === 0) {
+      console.log(chalk.dim('\n  No skills found. Add .md files to .duck/skills/ or ~/.duck/skills/\n'))
+    } else {
+      console.log(chalk.cyan.bold('\n  Available skills:\n'))
+      for (const s of skills) {
+        console.log(`  ${chalk.cyan('/' + s.name)}${s.description ? chalk.dim(' — ' + s.description) : ''}`)
+      }
+      console.log()
+    }
+    setIdle(true)
+    return
+  }
+
+  // Slash command → skill
+  const skillMatch = resolveSlashCommand(text)
+  if (skillMatch) {
+    const { skill, args } = skillMatch
+    // Inject skill prompt + user args as the message
+    const prompt = args
+      ? `${skill.prompt}\n\n---\nUser input: ${args}`
+      : skill.prompt
+    text = prompt
+    console.log(chalk.dim(`  ⚡ Running skill: ${skill.name}`))
   }
 
   outputUser(text)
@@ -167,6 +263,17 @@ async function handleSubmit(text: string): Promise<void> {
 // ─── Start ───────────────────────────────────────────────────────────────────
 
 printWelcome()
+
+const skills = getAllSkills()
+const hooks = listHooks()
+const startupInfo = [
+  `v${VERSION}`,
+  config.model,
+  skills.length > 0 ? `${skills.length} skills` : null,
+  hooks.length > 0 ? `${hooks.length} hooks` : null,
+].filter(Boolean).join(' · ')
+console.log(chalk.dim(`  ${startupInfo}\n`))
+
 initializeMcpTools().catch(console.error)
 startInput(workDir, handleSubmit)
 
@@ -179,7 +286,7 @@ process.on('SIGINT', () => {
 
 // ─── /init command ─────────────────────────────────────────────────────────────
 
-async function runInit(cwd: string): Promise<void> {
+async function runInit(cwd: string, force = false): Promise<void> {
   console.log('\n🔍 Scanning project structure...\n')
 
   const projectName = basename(cwd)
@@ -280,8 +387,8 @@ async function runInit(cwd: string): Promise<void> {
   lines.push('---', '', '*Generated by `/init` command*', '')
 
   const duckMdPath = resolve(cwd, 'DUCK.md')
-  if (existsSync(duckMdPath)) {
-    console.log('⚠️  DUCK.md already exists. Use `/init --force` to overwrite (not yet implemented).')
+  if (existsSync(duckMdPath) && !force) {
+    console.log('⚠️  DUCK.md already exists. Use `/init --force` to overwrite.')
     return
   }
 

@@ -1,33 +1,53 @@
 {
   "name": "duckcode",
-  "version": "0.1.0",
-  "description": "AI coding agent CLI — self-hosted, works with any OpenAI-compatible backend",
+  "version": "0.1.2",
+  "description": "AI coding agent for your terminal — self-hosted, works with any OpenAI-compatible backend",
   "type": "module",
   "bin": {
-    "duck": "./dist/main.js"
+    "duckcode": "dist/main.js",
+    "duck": "dist/main.js"
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "DUCK.md.example"
+  ],
   "scripts": {
     "dev": "tsx src/main.ts",
-    "build": "tsup src/main.ts --format esm --out-dir dist --no-splitting",
-    "typecheck": "tsc --noEmit"
+    "build": "tsup",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ai",
+    "coding-agent",
+    "cli",
+    "llm",
+    "openai",
+    "self-hosted",
+    "terminal",
+    "developer-tools",
+    "mcp"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/simonlemon333/duckcode.git"
+  },
+  "author": "Simon <simonlemon333@users.noreply.github.com>",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
-    "ink": "^5.0.1",
-    "ink-text-input": "^6.0.0",
-    "react": "^18.3.1",
     "chalk": "^5.3.0",
-    "glob": "^11.0.0",
-    "minimatch": "^10.0.1",
-    "node-fetch": "^3.3.2",
-    "strip-ansi": "^7.1.0",
     "commander": "^12.1.0",
-    "zod": "^3.23.8"
+    "glob": "^11.0.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
-    "@types/react": "^18.3.1",
-    "tsx": "^4.19.0",
+    "@types/node": "^25.5.2",
     "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
     "typescript": "^5.6.0"
   }
 }

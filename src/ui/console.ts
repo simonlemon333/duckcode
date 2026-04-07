@@ -131,9 +131,15 @@ function formatArgs(input: Record<string, unknown>): string {
 
 // ─── Streaming text ──────────────────────────────────────────────────────────
 
+let agentDisplayName = 'Duck'
+
+export function setAgentName(name: string): void {
+  agentDisplayName = name
+}
+
 export function outputAssistantStart(): void {
   console.log()
-  console.log(chalk.green.bold('  ● Duck'))
+  console.log(chalk.green.bold(`  ● ${agentDisplayName}`))
   console.log()
 }
 
@@ -170,8 +176,8 @@ export function outputUser(text: string): void {
 
 export function printWelcome(): void {
   console.log()
-  console.log(chalk.cyan.bold('  🦆 Duck'))
-  console.log(chalk.dim('  AI coding assistant · /clear to reset · Ctrl+C to exit'))
+  console.log(chalk.cyan.bold(`  🦆 ${agentDisplayName}`))
+  console.log(chalk.dim('  AI coding assistant · /help for commands · Ctrl+C to exit'))
   console.log()
 }
 

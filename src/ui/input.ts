@@ -332,6 +332,13 @@ export function startInput(
         process.exit(0)
       }
 
+      // ── Ctrl+L — clear screen ──────────────────────────────────────
+      if (ch === '\x0c') {
+        process.stdout.write('\x1b[2J\x1b[H')
+        drawPrompt()
+        continue
+      }
+
       if (!idle) continue
 
       // ── Enter ───────────────────────────────────────────────────────
