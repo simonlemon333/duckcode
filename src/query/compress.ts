@@ -85,7 +85,7 @@ function historyToText(history: Message[]): string {
 // ─── Compression ────────────────────────────────────────────────────────────
 
 const COMPRESSION_THRESHOLD = Number(process.env.DUCK_COMPRESS_THRESHOLD ?? 30_000)
-const KEEP_RECENT = 6               // Keep last 6 messages intact
+const KEEP_RECENT = Number(process.env.DUCK_COMPRESS_KEEP_RECENT ?? 6)
 
 export interface CompressResult {
   compressed: boolean
