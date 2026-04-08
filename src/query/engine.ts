@@ -303,6 +303,10 @@ export class QueryEngine {
       { id: string; name: string; args: string }
     > = {}
 
+    // Track which tool_call ids we've already yielded to prevent duplicate
+    // emissions between finish_reason event and stream-end fallback
+    const emittedToolCallIds = new Set<string>()
+
     while (true) {
       const { value, done } = await reader.read()
       if (done) break
@@ -389,11 +393,15 @@ export class QueryEngine {
           }
         }
 
-        // Emit pending tool calls on finish_reason (tool_calls OR stop fallback)
+        // Emit pending tool calls on finish_reason (tool_calls OR stop fallback).
+        // Track which ids we've emitted to prevent duplicates across
+        // finish_reason events and the stream-end fallback below.
         const finishReason = chunk.choices?.[0]?.finish_reason
         if (finishReason && Object.keys(pendingToolCalls).length > 0) {
-          for (const [, pending] of Object.entries(pendingToolCalls)) {
+          for (const [idx, pending] of Object.entries(pendingToolCalls)) {
             if (!pending.name) continue // Skip incomplete tool calls
+            if (emittedToolCallIds.has(pending.id)) continue
+            emittedToolCallIds.add(pending.id)
             let parsedInput: Record<string, unknown> = {}
             try {
               parsedInput = JSON.parse(pending.args)
@@ -406,27 +414,29 @@ export class QueryEngine {
               name: pending.name,
               input: parsedInput,
             }
+            delete pendingToolCalls[Number(idx)]
           }
         }
       }
     }
 
     // Fallback: emit any remaining pending tool calls at stream end
-    if (Object.keys(pendingToolCalls).length > 0) {
-      for (const [, pending] of Object.entries(pendingToolCalls)) {
-        if (!pending.name) continue
-        let parsedInput: Record<string, unknown> = {}
-        try {
-          parsedInput = JSON.parse(pending.args)
-        } catch {
-          parsedInput = { _raw: pending.args }
-        }
-        yield {
-          type: 'tool_start',
-          id: pending.id,
-          name: pending.name,
-          input: parsedInput,
-        }
+    // (some providers end the stream without a finish_reason event)
+    for (const [, pending] of Object.entries(pendingToolCalls)) {
+      if (!pending.name) continue
+      if (emittedToolCallIds.has(pending.id)) continue
+      emittedToolCallIds.add(pending.id)
+      let parsedInput: Record<string, unknown> = {}
+      try {
+        parsedInput = JSON.parse(pending.args)
+      } catch {
+        parsedInput = { _raw: pending.args }
+      }
+      yield {
+        type: 'tool_start',
+        id: pending.id,
+        name: pending.name,
+        input: parsedInput,
       }
     }
   }
