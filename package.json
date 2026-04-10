@@ -1,6 +1,6 @@
 {
   "name": "duckcode",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "AI coding agent for your terminal — self-hosted, works with any OpenAI-compatible backend",
   "type": "module",
   "bin": {
