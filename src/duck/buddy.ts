@@ -267,12 +267,19 @@ Example output:
     let raw = data.choices?.[0]?.message?.content ?? ''
     // Strip any <think> blocks (MiniMax)
     raw = raw.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
-    // Extract first JSON object
-    const match = raw.match(/\{[\s\S]*?\}/)
-    if (!match) throw new Error('no JSON in response')
-    const parsed = JSON.parse(match[0])
+    // Strip markdown code fences if LLM wrapped JSON in ```json ... ```
+    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim()
+
+    // Extract outermost JSON object: first { to last } (greedy, not first-pair)
+    const start = raw.indexOf('{')
+    const end = raw.lastIndexOf('}')
+    if (start === -1 || end === -1 || end < start) {
+      throw new Error(`no JSON braces in response: ${raw.slice(0, 120)}`)
+    }
+    const jsonStr = raw.slice(start, end + 1)
+    const parsed = JSON.parse(jsonStr)
     if (typeof parsed.name !== 'string' || typeof parsed.personality !== 'string') {
-      throw new Error('invalid shape')
+      throw new Error(`invalid shape: ${jsonStr.slice(0, 120)}`)
     }
 
     return {
@@ -280,7 +287,10 @@ Example output:
       personality: parsed.personality.slice(0, 200),
       createdAt: new Date().toISOString(),
     }
-  } catch {
+  } catch (e) {
+    if (process.env.DUCK_DEBUG_BUDDY) {
+      console.error(`[buddy] Soul generation fell back: ${(e as Error).message}`)
+    }
     // Fallback: deterministic name from species
     return {
       name: `${bones.species}-${bones.stats.WISDOM}`,
@@ -292,11 +302,11 @@ Example output:
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
-export async function getBuddy(config: GatewayConfig): Promise<Buddy> {
+export async function getBuddy(config: GatewayConfig, forceRegenSoul = false): Promise<Buddy> {
   const userId = getOrCreateUserId()
   const bones = computeBones(userId)
 
-  let soul = loadSoul()
+  let soul = forceRegenSoul ? null : loadSoul()
   if (!soul) {
     soul = await generateSoul(bones, config)
     saveSoul(soul)

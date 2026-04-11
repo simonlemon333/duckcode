@@ -16,6 +16,72 @@ let permissionHandler: PermissionHandler | null = null
 let submitTimer: ReturnType<typeof setTimeout> | null = null
 let idle = true
 let shortCwd = ''
+
+// Command completion: main.ts registers the full list of commands
+// (built-ins + skill names + aliases) via setCommandList().
+let commandList: string[] = []
+
+export function setCommandList(commands: string[]): void {
+  commandList = [...commands].sort()
+}
+
+/**
+ * Compute the longest common prefix of an array of strings.
+ */
+function longestCommonPrefix(strs: string[]): string {
+  if (strs.length === 0) return ''
+  let prefix = strs[0]
+  for (let i = 1; i < strs.length; i++) {
+    while (!strs[i].startsWith(prefix)) {
+      prefix = prefix.slice(0, -1)
+      if (!prefix) return ''
+    }
+  }
+  return prefix
+}
+
+/**
+ * Handle Tab key when input starts with `/`. Returns true if handled.
+ */
+function handleTabCompletion(): boolean {
+  if (!inputBuffer.startsWith('/')) return false
+
+  const query = inputBuffer.slice(1).toLowerCase()
+  const matches = commandList.filter((c) => c.startsWith(query))
+
+  if (matches.length === 0) return false
+
+  if (matches.length === 1) {
+    // Single match — complete it fully and add a space for args
+    inputBuffer = '/' + matches[0] + ' '
+    drawPrompt()
+    return true
+  }
+
+  // Multiple matches — complete to longest common prefix
+  const prefix = longestCommonPrefix(matches)
+  if (prefix.length > query.length) {
+    inputBuffer = '/' + prefix
+    drawPrompt()
+    return true
+  }
+
+  // Already at common prefix — print matches above the prompt
+  clearPromptLine()
+  console.log()
+  console.log(chalk.dim('  Matches:'))
+  const cols = Math.min(4, matches.length)
+  const colWidth = Math.max(...matches.map((m) => m.length)) + 3
+  for (let i = 0; i < matches.length; i += cols) {
+    const row = matches.slice(i, i + cols)
+      .map((m) => chalk.cyan('/' + m).padEnd(colWidth + 10))
+      .join('')
+    console.log('  ' + row)
+  }
+  console.log()
+  drawPrompt()
+  return true
+}
 let spinnerTimer: ReturnType<typeof setInterval> | null = null
 let spinnerFrame = 0
 const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
@@ -364,8 +430,14 @@ export function startInput(
         continue
       }
 
+      // ── Tab — slash command completion ──────────────────────────────
+      if (ch === '\t') {
+        if (handleTabCompletion()) continue
+        continue  // Ignore Tab when not completing
+      }
+
       // ── Ignore control/arrow sequences ──────────────────────────────
-      if (ch.charCodeAt(0) < 32 && ch !== '\t') continue
+      if (ch.charCodeAt(0) < 32) continue
 
       // ── Normal character ────────────────────────────────────────────
       inputBuffer += ch

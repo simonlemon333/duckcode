@@ -21,7 +21,7 @@ import {
   outputToolCall,
   outputError,
 } from './ui/console.js'
-import { startInput, setIdle, showPermission, stopInput, stopSpinner, startSpinner } from './ui/input.js'
+import { startInput, setIdle, showPermission, stopInput, stopSpinner, startSpinner, setCommandList } from './ui/input.js'
 import type { PermissionCallback, PermissionResult } from './query/engine.js'
 
 // ── Register all tools (side-effect imports) ──────────────────────────────────
@@ -86,6 +86,18 @@ if (config.agentName) setAgentName(config.agentName)
 // is injected into the system prompt via loadProjectContext().
 loadSkills(workDir)
 initHooks(workDir)
+
+// Register all slash commands for Tab completion
+const BUILTIN_COMMANDS = [
+  'help', 'version', 'clear', 'init', 'skills', 'mcp',
+  'save', 'sessions', 'buddy', 'dream', 'memory', 'rule',
+]
+const skillCommands: string[] = []
+for (const s of getAllSkills()) {
+  skillCommands.push(s.name)
+  for (const alias of s.aliases) skillCommands.push(alias)
+}
+setCommandList([...BUILTIN_COMMANDS, ...skillCommands])
 
 const projectContext = loadProjectContext(workDir)
 const engine = new QueryEngine(config, projectContext)
@@ -319,11 +331,15 @@ async function handleSubmit(rawText: string): Promise<void> {
     return
   }
 
-  // /buddy — show the terminal pet
-  if (text.toLowerCase() === '/buddy') {
+  // /buddy [--regen] — show the terminal pet
+  if (text.toLowerCase().startsWith('/buddy')) {
+    const forceRegen = text.includes('--regen')
     try {
-      const buddy = await getBuddy(config)
+      const buddy = await getBuddy(config, forceRegen)
       renderBuddy(buddy)
+      if (forceRegen) {
+        console.log(chalk.dim('  (soul regenerated)\n'))
+      }
     } catch (e) {
       console.log(chalk.red(`\n  ✗ Buddy summon failed: ${(e as Error).message}\n`))
     }
