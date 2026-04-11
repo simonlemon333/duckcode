@@ -31,6 +31,7 @@ import { clearFileCache } from './tools/file-read.js'
 import { saveSession, loadSession, listSessions } from './session.js'
 import { getBuddy } from './duck/buddy.js'
 import { renderBuddy } from './duck/buddy-render.js'
+import { extractDigest, appendDigestToMemory, getProjectName } from './duck/dream.js'
 import './tools/file-write.js'
 import './tools/glob-grep.js'
 import './tools/web-fetch.js'
@@ -162,6 +163,7 @@ async function handleSubmit(rawText: string): Promise<void> {
     console.log(`  ${chalk.cyan('/save')} [n]  ${chalk.dim('— Save conversation (name optional)')}`)
     console.log(`  ${chalk.cyan('/sessions')} ${chalk.dim('— List saved sessions')}`)
     console.log(`  ${chalk.cyan('/buddy')}    ${chalk.dim('— Summon your terminal duck companion')}`)
+    console.log(`  ${chalk.cyan('/dream')}    ${chalk.dim('— Consolidate current session into long-term memory')}`)
 
     const skills = getAllSkills()
     if (skills.length > 0) {
@@ -204,6 +206,34 @@ async function handleSubmit(rawText: string): Promise<void> {
       const path = saveSession(history, workDir, config.model, name)
       console.log(chalk.green(`\n  ✓ Saved session "${name}" (${history.length} messages)`))
       console.log(chalk.dim(`    ${path}\n`))
+    }
+    setIdle(true)
+    return
+  }
+
+  // /dream — extract durable facts from current session to long-term memory
+  if (text.toLowerCase() === '/dream') {
+    const history = engine.getHistory()
+    if (history.length === 0) {
+      console.log(chalk.yellow('\n  ⚠ Nothing to consolidate — conversation is empty.\n'))
+      setIdle(true)
+      return
+    }
+    console.log(chalk.dim('\n  💭 Extracting session digest...'))
+    try {
+      const project = getProjectName(workDir)
+      const digest = await extractDigest(history, project, config)
+      const memoryPath = appendDigestToMemory(digest)
+      const totalItems = digest.files.length + digest.decisions.length + digest.resolved.length + digest.open.length
+
+      console.log(chalk.green(`\n  ✓ Dream consolidated (${totalItems} items)`))
+      if (digest.files.length > 0) console.log(chalk.dim(`    Files:     ${digest.files.length}`))
+      if (digest.decisions.length > 0) console.log(chalk.dim(`    Decisions: ${digest.decisions.length}`))
+      if (digest.resolved.length > 0) console.log(chalk.dim(`    Resolved:  ${digest.resolved.length}`))
+      if (digest.open.length > 0) console.log(chalk.dim(`    Open:      ${digest.open.length}`))
+      console.log(chalk.dim(`    → ${memoryPath}\n`))
+    } catch (e) {
+      console.log(chalk.red(`\n  ✗ Dream failed: ${(e as Error).message}\n`))
     }
     setIdle(true)
     return
