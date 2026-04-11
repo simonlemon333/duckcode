@@ -448,4 +448,8 @@ export class QueryEngine {
   getHistory(): Message[] {
     return [...this.history]
   }
+
+  setHistory(history: Message[]): void {
+    this.history = [...history]
+  }
 }

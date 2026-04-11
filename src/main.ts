@@ -28,6 +28,7 @@ import type { PermissionCallback, PermissionResult } from './query/engine.js'
 import './tools/bash.js'
 import './tools/file-read.js'
 import { clearFileCache } from './tools/file-read.js'
+import { saveSession, loadSession, listSessions } from './session.js'
 import './tools/file-write.js'
 import './tools/glob-grep.js'
 import './tools/web-fetch.js'
@@ -45,6 +46,7 @@ program
   .option('-d, --dir <path>', 'Working directory', '.')
   .option('--model <name>', 'Model name to use (from models config)')
   .option('--proxy <url>', 'HTTP/HTTPS proxy URL')
+  .option('--resume [name]', 'Resume a saved session (defaults to latest)')
   .parse()
 
 const opts = program.opts()
@@ -77,6 +79,18 @@ const engine = new QueryEngine(config, projectContext)
 // Load skills and hooks
 loadSkills(workDir)
 initHooks(workDir)
+
+// ── Resume session if requested ─────────────────────────────────────────────
+if (opts.resume !== undefined) {
+  const sessionName = typeof opts.resume === 'string' ? opts.resume : 'latest'
+  const session = loadSession(sessionName)
+  if (session) {
+    engine.setHistory(session.history)
+    console.log(chalk.dim(`  ↻ Resumed "${sessionName}" (${session.history.length} messages from ${new Date(session.savedAt).toLocaleString()})`))
+  } else {
+    console.log(chalk.yellow(`  ⚠ No session "${sessionName}" found — starting fresh`))
+  }
+}
 
 // Track tool calls per assistant turn
 let pendingTools = new Map<string, { name: string; input: Record<string, unknown> }>()
@@ -133,10 +147,13 @@ async function handleSubmit(rawText: string): Promise<void> {
   // /help
   if (text.toLowerCase() === '/help') {
     console.log(chalk.cyan.bold('\n  🦆 DuckCode Commands\n'))
-    console.log(`  ${chalk.cyan('/help')}     ${chalk.dim('— Show this help')}`)
-    console.log(`  ${chalk.cyan('/clear')}    ${chalk.dim('— Reset conversation history')}`)
-    console.log(`  ${chalk.cyan('/init')}     ${chalk.dim('— Generate DUCK.md from project')}`)
-    console.log(`  ${chalk.cyan('/skills')}   ${chalk.dim('— List available skills')}`)
+    console.log(`  ${chalk.cyan('/help')}      ${chalk.dim('— Show this help')}`)
+    console.log(`  ${chalk.cyan('/version')}   ${chalk.dim('— Show version and model')}`)
+    console.log(`  ${chalk.cyan('/clear')}     ${chalk.dim('— Reset conversation history')}`)
+    console.log(`  ${chalk.cyan('/init')}      ${chalk.dim('— Generate DUCK.md from project')}`)
+    console.log(`  ${chalk.cyan('/skills')}    ${chalk.dim('— List available skills')}`)
+    console.log(`  ${chalk.cyan('/save')} [n]  ${chalk.dim('— Save conversation (name optional)')}`)
+    console.log(`  ${chalk.cyan('/sessions')} ${chalk.dim('— List saved sessions')}`)
 
     const skills = getAllSkills()
     if (skills.length > 0) {
@@ -164,6 +181,40 @@ async function handleSubmit(rawText: string): Promise<void> {
     engine.clearHistory()
     clearFileCache()
     console.log('\n✓ Conversation and file cache cleared.\n')
+    setIdle(true)
+    return
+  }
+
+  // /save [name]
+  if (text.toLowerCase().startsWith('/save')) {
+    const parts = text.split(/\s+/)
+    const name = parts[1] || `session-${Date.now()}`
+    const history = engine.getHistory()
+    if (history.length === 0) {
+      console.log(chalk.yellow('\n  ⚠ Nothing to save — conversation is empty.\n'))
+    } else {
+      const path = saveSession(history, workDir, config.model, name)
+      console.log(chalk.green(`\n  ✓ Saved session "${name}" (${history.length} messages)`))
+      console.log(chalk.dim(`    ${path}\n`))
+    }
+    setIdle(true)
+    return
+  }
+
+  // /sessions — list all saved sessions
+  if (text.toLowerCase() === '/sessions') {
+    const sessions = listSessions()
+    if (sessions.length === 0) {
+      console.log(chalk.dim('\n  No saved sessions yet. Use /save <name> to create one.\n'))
+    } else {
+      console.log(chalk.cyan.bold('\n  Saved sessions:\n'))
+      for (const s of sessions) {
+        const when = new Date(s.savedAt).toLocaleString()
+        console.log(`  ${chalk.cyan(s.name)} ${chalk.dim(`· ${s.messages} msgs · ${when}`)}`)
+        console.log(chalk.dim(`    ${s.cwd}`))
+      }
+      console.log(chalk.dim('\n  Resume with: duckcode --resume <name>\n'))
+    }
     setIdle(true)
     return
   }
@@ -257,6 +308,14 @@ async function handleSubmit(rawText: string): Promise<void> {
   }
 
   pendingTools = new Map()
+
+  // Auto-save session after each turn so --resume picks up the latest state
+  try {
+    saveSession(engine.getHistory(), workDir, config.model, 'latest')
+  } catch {
+    // Non-fatal; session persistence is best-effort
+  }
+
   setIdle(true)
 }
 
