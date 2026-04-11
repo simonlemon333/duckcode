@@ -32,6 +32,8 @@ import { saveSession, loadSession, listSessions } from './session.js'
 import { getBuddy } from './duck/buddy.js'
 import { renderBuddy } from './duck/buddy-render.js'
 import { extractDigest, appendDigestToMemory, getProjectName } from './duck/dream.js'
+import { listRules, addRule, removeRule, clearRules, RULES_PATH } from './duck/rules.js'
+import { collectMemoryStats, renderMemoryStats } from './duck/memory-inspector.js'
 import './tools/file-write.js'
 import './tools/glob-grep.js'
 import './tools/web-fetch.js'
@@ -166,6 +168,8 @@ async function handleSubmit(rawText: string): Promise<void> {
     console.log(`  ${chalk.cyan('/sessions')} ${chalk.dim('— List saved sessions')}`)
     console.log(`  ${chalk.cyan('/buddy')}    ${chalk.dim('— Summon your terminal duck companion')}`)
     console.log(`  ${chalk.cyan('/dream')}    ${chalk.dim('— Consolidate current session into long-term memory')}`)
+    console.log(`  ${chalk.cyan('/memory')}   ${chalk.dim('— Inspect all 6 memory tiers')}`)
+    console.log(`  ${chalk.cyan('/rule')}     ${chalk.dim('— Manage persistent rules (list/add/remove/clear)')}`)
 
     const skills = getAllSkills()
     if (skills.length > 0) {
@@ -208,6 +212,58 @@ async function handleSubmit(rawText: string): Promise<void> {
       const path = saveSession(history, workDir, config.model, name)
       console.log(chalk.green(`\n  ✓ Saved session "${name}" (${history.length} messages)`))
       console.log(chalk.dim(`    ${path}\n`))
+    }
+    setIdle(true)
+    return
+  }
+
+  // /memory — show all 6 memory tiers and their current state
+  if (text.toLowerCase() === '/memory') {
+    const stats = collectMemoryStats(workDir, engine.getHistory(), config, projectContext)
+    renderMemoryStats(stats)
+    setIdle(true)
+    return
+  }
+
+  // /rule — manage persistent user rules (L1.5 memory tier)
+  if (text.toLowerCase().startsWith('/rule')) {
+    const parts = text.split(/\s+/)
+    const sub = parts[1]?.toLowerCase()
+
+    if (!sub || sub === 'list') {
+      const rules = listRules()
+      if (rules.length === 0) {
+        console.log(chalk.dim('\n  No rules set. Use: /rule add <text>\n'))
+        console.log(chalk.dim(`  Rules file: ${RULES_PATH}\n`))
+      } else {
+        console.log(chalk.cyan.bold('\n  📋 Active rules:\n'))
+        rules.forEach((r, i) => {
+          console.log(`  ${chalk.dim(String(i + 1) + '.')} ${r}`)
+        })
+        console.log()
+      }
+    } else if (sub === 'add') {
+      const body = text.slice(text.indexOf('add') + 3).trim()
+      if (!body) {
+        console.log(chalk.yellow('\n  ⚠ Usage: /rule add <rule text>\n'))
+      } else {
+        const count = addRule(body)
+        console.log(chalk.green(`\n  ✓ Rule added (${count} total). Effective next session.\n`))
+      }
+    } else if (sub === 'remove' || sub === 'rm') {
+      const idx = Number(parts[2])
+      if (Number.isNaN(idx)) {
+        console.log(chalk.yellow('\n  ⚠ Usage: /rule remove <number>\n'))
+      } else if (removeRule(idx)) {
+        console.log(chalk.green(`\n  ✓ Rule ${idx} removed. Effective next session.\n`))
+      } else {
+        console.log(chalk.red(`\n  ✗ No rule at position ${idx}\n`))
+      }
+    } else if (sub === 'clear') {
+      clearRules()
+      console.log(chalk.green('\n  ✓ All rules cleared.\n'))
+    } else {
+      console.log(chalk.yellow('\n  Usage: /rule [list | add <text> | remove <n> | clear]\n'))
     }
     setIdle(true)
     return
