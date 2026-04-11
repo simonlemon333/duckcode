@@ -29,6 +29,8 @@ import './tools/bash.js'
 import './tools/file-read.js'
 import { clearFileCache } from './tools/file-read.js'
 import { saveSession, loadSession, listSessions } from './session.js'
+import { getBuddy } from './duck/buddy.js'
+import { renderBuddy } from './duck/buddy-render.js'
 import './tools/file-write.js'
 import './tools/glob-grep.js'
 import './tools/web-fetch.js'
@@ -159,6 +161,7 @@ async function handleSubmit(rawText: string): Promise<void> {
     console.log(`  ${chalk.cyan('/skills')}    ${chalk.dim('— List available skills')}`)
     console.log(`  ${chalk.cyan('/save')} [n]  ${chalk.dim('— Save conversation (name optional)')}`)
     console.log(`  ${chalk.cyan('/sessions')} ${chalk.dim('— List saved sessions')}`)
+    console.log(`  ${chalk.cyan('/buddy')}    ${chalk.dim('— Summon your terminal duck companion')}`)
 
     const skills = getAllSkills()
     if (skills.length > 0) {
@@ -201,6 +204,18 @@ async function handleSubmit(rawText: string): Promise<void> {
       const path = saveSession(history, workDir, config.model, name)
       console.log(chalk.green(`\n  ✓ Saved session "${name}" (${history.length} messages)`))
       console.log(chalk.dim(`    ${path}\n`))
+    }
+    setIdle(true)
+    return
+  }
+
+  // /buddy — show the terminal pet
+  if (text.toLowerCase() === '/buddy') {
+    try {
+      const buddy = await getBuddy(config)
+      renderBuddy(buddy)
+    } catch (e) {
+      console.log(chalk.red(`\n  ✗ Buddy summon failed: ${(e as Error).message}\n`))
     }
     setIdle(true)
     return
