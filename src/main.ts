@@ -32,6 +32,8 @@ import { saveSession, loadSession, listSessions } from './session.js'
 import './tools/file-write.js'
 import './tools/glob-grep.js'
 import './tools/web-fetch.js'
+import './tools/agent.js'
+import { initAgentTool } from './tools/agent.js'
 import { initializeMcpTools, cleanupMcpConnections } from './tools/mcp.js'
 
 // ─── CLI entry point ──────────────────────────────────────────────────────────
@@ -75,6 +77,9 @@ const config = loadConfig(opts.model)
 if (config.agentName) setAgentName(config.agentName)
 const projectContext = loadProjectContext(workDir)
 const engine = new QueryEngine(config, projectContext)
+
+// Initialize sub-agent tool with config (needs access to LLM settings)
+initAgentTool(config)
 
 // Load skills and hooks
 loadSkills(workDir)
