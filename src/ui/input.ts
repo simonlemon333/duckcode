@@ -6,6 +6,8 @@
  */
 
 import chalk from 'chalk'
+import { readdirSync, statSync, existsSync } from 'fs'
+import { join, dirname, basename } from 'path'
 
 type SubmitHandler = (text: string) => void
 type PermissionHandler = (granted: boolean) => void
@@ -20,9 +22,99 @@ let shortCwd = ''
 // Command completion: main.ts registers the full list of commands
 // (built-ins + skill names + aliases) via setCommandList().
 let commandList: string[] = []
+let inputCwd: string = process.cwd()
 
 export function setCommandList(commands: string[]): void {
   commandList = [...commands].sort()
+}
+
+// ─── Hint lines (real-time dropdown below prompt) ────────────────────────
+
+let hintLineCount = 0
+const MAX_HINT_LINES = 8
+
+function clearHint(): void {
+  if (hintLineCount === 0) return
+  process.stdout.write('\x1b[s')  // save cursor
+  for (let i = 0; i < hintLineCount; i++) {
+    process.stdout.write('\n\x1b[2K')
+  }
+  process.stdout.write('\x1b[u')  // restore cursor
+  hintLineCount = 0
+}
+
+function drawHint(lines: string[]): void {
+  clearHint()
+  if (lines.length === 0) return
+  const shown = lines.slice(0, MAX_HINT_LINES)
+  process.stdout.write('\x1b[s')
+  for (const line of shown) {
+    process.stdout.write('\n\x1b[2K' + line)
+  }
+  process.stdout.write('\x1b[u')
+  hintLineCount = shown.length
+}
+
+/**
+ * Given the current input buffer, compute what hint (if any) to show.
+ * Returns array of lines to render below the prompt.
+ */
+function computeHint(buffer: string): string[] {
+  // Case 1: slash command hint — buffer starts with /
+  if (buffer.startsWith('/')) {
+    const query = buffer.slice(1).toLowerCase()
+    const matches = commandList.filter((c) => c.startsWith(query))
+    if (matches.length === 0) return []
+    return matches.slice(0, MAX_HINT_LINES).map(
+      (c) => chalk.dim('    ') + chalk.cyan('/' + c),
+    )
+  }
+
+  // Case 2: @mention hint — last @ followed by path/url fragment
+  const atMatch = buffer.match(/@([^\s]*)$/)
+  if (atMatch) {
+    const fragment = atMatch[1]
+    // URLs: don't try to autocomplete
+    if (fragment.startsWith('http')) return []
+    return computeFileHint(fragment)
+  }
+
+  return []
+}
+
+function computeFileHint(fragment: string): string[] {
+  // Split into directory + prefix
+  let dir = inputCwd
+  let prefix = fragment
+  if (fragment.includes('/')) {
+    const lastSlash = fragment.lastIndexOf('/')
+    const relDir = fragment.slice(0, lastSlash)
+    prefix = fragment.slice(lastSlash + 1)
+    dir = join(inputCwd, relDir)
+  }
+
+  if (!existsSync(dir)) return []
+
+  try {
+    const entries = readdirSync(dir)
+      .filter((name) => {
+        if (name.startsWith('.')) return false // skip hidden
+        if (name === 'node_modules') return false
+        return name.toLowerCase().startsWith(prefix.toLowerCase())
+      })
+      .slice(0, MAX_HINT_LINES)
+
+    return entries.map((name) => {
+      let full = name
+      try {
+        const st = statSync(join(dir, name))
+        if (st.isDirectory()) full = name + '/'
+      } catch {}
+      return chalk.dim('    @') + chalk.cyan(full)
+    })
+  } catch {
+    return []
+  }
 }
 
 /**
@@ -122,12 +214,15 @@ export function stopSpinner(): void {
 function drawPrompt(): void {
   clearPromptLine()
   if (!idle) {
+    clearHint()
     startSpinner()
     return
   }
   stopSpinner()
   const display = inputBuffer || chalk.dim(`Ask Duck… (${shortCwd})`)
   process.stdout.write(chalk.cyan.bold('  ❯ ') + display)
+  // Update the real-time hint dropdown below the prompt
+  drawHint(computeHint(inputBuffer))
 }
 
 // ─── Permission prompt ──────────────────────────────────────────────────────
@@ -164,7 +259,8 @@ export function showMenu(
 ): Promise<{ value: string; customInput?: string }> {
   return new Promise((resolve) => {
     stopSpinner()
-    
+    clearHint()
+
     menuOptions = options
     menuHasCustomInput = hasCustomInput
     menuSelectedIndex = 0
@@ -306,6 +402,7 @@ export function startInput(
   onSubmit: SubmitHandler,
 ): void {
   shortCwd = cwd.replace(process.env.HOME ?? '', '~')
+  inputCwd = cwd
   submitHandler = onSubmit
 
   process.stdin.setRawMode(true)
@@ -452,6 +549,7 @@ function flushSubmit(): void {
   submitTimer = null
   const text = inputBuffer.trim()
   inputBuffer = ''
+  clearHint()
   clearPromptLine()
   if (text && submitHandler) {
     submitHandler(text)

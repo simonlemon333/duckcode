@@ -151,20 +151,52 @@ export function getSkill(name: string): Skill | undefined {
  * This is the "progressive loading" trick: metadata always in system
  * prompt, full body only loaded when the user types the command.
  */
-export function buildSkillsSystemSection(): string {
-  if (loadedSkills.length === 0) return ''
+// Built-in slash commands — these are handled directly by main.ts
+// (not via the skill loader), but Duck needs to know they exist so
+// it can suggest them and not invent fake commands.
+const BUILTIN_COMMANDS: Array<{ name: string; desc: string }> = [
+  { name: 'help', desc: 'Show all commands and their descriptions' },
+  { name: 'version', desc: 'Show version number and model name' },
+  { name: 'clear', desc: 'Reset conversation history and file cache' },
+  { name: 'init', desc: 'Generate DUCK.md from project structure (--force to overwrite)' },
+  { name: 'mcp', desc: 'List connected MCP servers and their tools' },
+  { name: 'skills', desc: 'List all available skills with triggers/aliases' },
+  { name: 'save', desc: 'Save current conversation to a named snapshot' },
+  { name: 'sessions', desc: 'List all saved session snapshots' },
+  { name: 'buddy', desc: 'Summon your terminal duck companion (--regen to rebuild soul)' },
+  { name: 'dream', desc: 'Extract session facts into long-term memory' },
+  { name: 'memory', desc: 'Inspect all 6 memory tiers with sizes and status' },
+  { name: 'rule', desc: 'Manage persistent user rules (list/add/remove/clear)' },
+]
 
+export function buildSkillsSystemSection(): string {
   const lines: string[] = []
   lines.push('<available_slash_commands>')
-  lines.push('The user can invoke these slash commands. If their request matches one of these patterns, suggest the command instead of doing the work manually.')
+  lines.push('The user can invoke these slash commands. If their natural-language request matches one of these commands, suggest it instead of doing the work manually. Do NOT invent commands that are not in this list.')
   lines.push('')
-  for (const s of loadedSkills) {
-    const aliasStr = s.aliases.length > 0 ? ` (aliases: ${s.aliases.map((a) => '/' + a).join(', ')})` : ''
-    const triggerStr = s.triggers.length > 0 ? ` [triggers: ${s.triggers.join(', ')}]` : ''
-    lines.push(`- /${s.name}${aliasStr}${triggerStr} — ${s.description}`)
+  lines.push('Built-in commands (handled by DuckCode core):')
+  for (const c of BUILTIN_COMMANDS) {
+    lines.push(`- /${c.name} — ${c.desc}`)
+  }
+
+  if (loadedSkills.length > 0) {
+    lines.push('')
+    lines.push('Skill commands (markdown prompt templates):')
+    for (const s of loadedSkills) {
+      const aliasStr = s.aliases.length > 0 ? ` (aliases: ${s.aliases.map((a) => '/' + a).join(', ')})` : ''
+      const triggerStr = s.triggers.length > 0 ? ` [triggers: ${s.triggers.join(', ')}]` : ''
+      lines.push(`- /${s.name}${aliasStr}${triggerStr} — ${s.description}`)
+    }
   }
   lines.push('</available_slash_commands>')
   return lines.join('\n')
+}
+
+/**
+ * Get built-in command names (without the /) for Tab completion.
+ */
+export function getBuiltinCommands(): Array<{ name: string; desc: string }> {
+  return [...BUILTIN_COMMANDS]
 }
 
 /**

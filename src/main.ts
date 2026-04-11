@@ -7,7 +7,7 @@ import chalk from 'chalk'
 
 import { loadConfig, hasConfig } from './config.js'
 import { setupProxy } from './proxy.js'
-import { loadSkills, resolveSlashCommand, getAllSkills } from './skills/loader.js'
+import { loadSkills, resolveSlashCommand, getAllSkills, getBuiltinCommands } from './skills/loader.js'
 import { initHooks, listHooks } from './skills/hooks.js'
 import { QueryEngine } from './query/engine.js'
 import { loadProjectContext } from './memory/context.js'
@@ -45,7 +45,7 @@ import { initializeMcpTools, cleanupMcpConnections, listMcpServers } from './too
 // ─── CLI entry point ──────────────────────────────────────────────────────────
 
 // Read version from package.json at build time (tsup inlines it)
-const VERSION = '0.1.5'
+const VERSION = '0.1.6'
 
 program
   .name('duckcode')
@@ -87,17 +87,14 @@ if (config.agentName) setAgentName(config.agentName)
 loadSkills(workDir)
 initHooks(workDir)
 
-// Register all slash commands for Tab completion
-const BUILTIN_COMMANDS = [
-  'help', 'version', 'clear', 'init', 'skills', 'mcp',
-  'save', 'sessions', 'buddy', 'dream', 'memory', 'rule',
-]
+// Register all slash commands for Tab completion + real-time hints
+const builtinNames = getBuiltinCommands().map((c) => c.name)
 const skillCommands: string[] = []
 for (const s of getAllSkills()) {
   skillCommands.push(s.name)
   for (const alias of s.aliases) skillCommands.push(alias)
 }
-setCommandList([...BUILTIN_COMMANDS, ...skillCommands])
+setCommandList([...builtinNames, ...skillCommands])
 
 const projectContext = loadProjectContext(workDir)
 const engine = new QueryEngine(config, projectContext)
