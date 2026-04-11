@@ -157,6 +157,7 @@ async function startMcpServer(serverConfig: McpServerConfig): Promise<{ client: 
 // ─── Tool Registry ───────────────────────────────────────────────────────────
 
 const mcpClients = new Map<string, McpClient>()
+const mcpServerTools = new Map<string, string[]>()  // serverName → tool names
 
 /**
  * Initialize MCP servers from config and register their tools
@@ -171,6 +172,7 @@ export async function initializeMcpTools(): Promise<void> {
     try {
       const { client, tools } = await startMcpServer(serverConfig)
       mcpClients.set(serverConfig.name, client)
+      mcpServerTools.set(serverConfig.name, tools.map((t) => t.name))
 
       for (const tool of tools) {
         const toolName = `${serverConfig.name}_${tool.name}`
@@ -208,6 +210,22 @@ export async function initializeMcpTools(): Promise<void> {
       console.error(`[MCP] Failed to load server ${serverConfig.name}: ${(e as Error).message}`)
     }
   }
+}
+
+/**
+ * List all MCP servers and their tools for /mcp slash command.
+ */
+export function listMcpServers(): Array<{
+  name: string
+  connected: boolean
+  tools: string[]
+}> {
+  const configured = loadConfig().mcpServers || []
+  return configured.map((srv) => ({
+    name: srv.name,
+    connected: mcpClients.has(srv.name),
+    tools: mcpServerTools.get(srv.name) ?? [],
+  }))
 }
 
 /**

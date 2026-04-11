@@ -29,6 +29,7 @@ import './tools/bash.js'
 import './tools/file-read.js'
 import { clearFileCache } from './tools/file-read.js'
 import { saveSession, loadSession, listSessions } from './session.js'
+import { expandMentions } from './input-mentions.js'
 import { getBuddy } from './duck/buddy.js'
 import { renderBuddy } from './duck/buddy-render.js'
 import { extractDigest, appendDigestToMemory, getProjectName } from './duck/dream.js'
@@ -39,7 +40,7 @@ import './tools/glob-grep.js'
 import './tools/web-fetch.js'
 import './tools/agent.js'
 import { initAgentTool } from './tools/agent.js'
-import { initializeMcpTools, cleanupMcpConnections } from './tools/mcp.js'
+import { initializeMcpTools, cleanupMcpConnections, listMcpServers } from './tools/mcp.js'
 
 // ─── CLI entry point ──────────────────────────────────────────────────────────
 
@@ -217,6 +218,27 @@ async function handleSubmit(rawText: string): Promise<void> {
     return
   }
 
+  // /mcp — list connected MCP servers and their tools
+  if (text.toLowerCase() === '/mcp') {
+    const servers = listMcpServers()
+    if (servers.length === 0) {
+      console.log(chalk.dim('\n  No MCP servers configured. Add mcpServers to ~/.duck/config.json.\n'))
+    } else {
+      console.log(chalk.cyan.bold('\n  🔌 MCP Servers\n'))
+      for (const srv of servers) {
+        const status = srv.connected ? chalk.green('● connected') : chalk.red('○ disconnected')
+        console.log(`  ${chalk.bold(srv.name)}  ${status}  ${chalk.dim(`${srv.tools.length} tools`)}`)
+        if (srv.tools.length > 0) {
+          const preview = srv.tools.slice(0, 8).map((t) => `${srv.name}_${t}`).join(', ')
+          console.log(chalk.dim(`     ${preview}${srv.tools.length > 8 ? ` … (+${srv.tools.length - 8} more)` : ''}`))
+        }
+      }
+      console.log()
+    }
+    setIdle(true)
+    return
+  }
+
   // /memory — show all 6 memory tiers and their current state
   if (text.toLowerCase() === '/memory') {
     const stats = collectMemoryStats(workDir, engine.getHistory(), config, projectContext)
@@ -369,12 +391,20 @@ async function handleSubmit(rawText: string): Promise<void> {
     console.log(chalk.dim(`  ⚡ Running skill: ${skill.name}`))
   }
 
-  outputUser(text)
+  // Expand @mentions (file attachments + image URLs)
+  const expanded = expandMentions(text, workDir)
+  for (const warning of expanded.warnings) {
+    console.log(chalk.yellow(`  ⚠ ${warning}`))
+  }
+  const finalText = expanded.text
+  const imageAttachments = expanded.images
+
+  outputUser(text)  // Show original input with @mentions, not expanded
   outputAssistantStart()
   setIdle(false)
   pendingTools = new Map()
 
-  for await (const event of engine.run(text, workDir, handlePermission)) {
+  for await (const event of engine.run(finalText, workDir, handlePermission, { images: imageAttachments })) {
     switch (event.type) {
       case 'text_delta':
         stopSpinner()

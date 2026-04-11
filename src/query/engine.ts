@@ -52,8 +52,24 @@ export class QueryEngine {
     userMessage: string,
     cwd: string,
     onPermission: PermissionCallback,
+    attachments?: { images?: Array<{ type: 'image_url'; image_url: { url: string } }> },
   ): AsyncGenerator<StreamEvent> {
-    this.history.push({ role: 'user', content: userMessage })
+    // If we have image attachments, store the user turn as a ContentBlock[]
+    // (extended with image_url blocks). Engine's OpenAI converter will
+    // pass these through for multimodal providers.
+    if (attachments?.images && attachments.images.length > 0) {
+      const blocks: ContentBlock[] = [{ type: 'text', text: userMessage }]
+      // Images are OpenAI-format content parts, not Anthropic blocks — we
+      // store them under a synthetic block type so the converter can
+      // forward them. See callLLM() user-message handling.
+      for (const img of attachments.images) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        blocks.push(img as any)
+      }
+      this.history.push({ role: 'user', content: blocks })
+    } else {
+      this.history.push({ role: 'user', content: userMessage })
+    }
 
     for (let turn = 0; turn < MAX_TURNS; turn++) {
       // ── Compress history if too long ──────────────────────────────────────
@@ -235,8 +251,23 @@ export class QueryEngine {
               }
             }).filter(Boolean)
           }
-          const text = blocks.find(b => b.type === 'text')
-          return { role: 'user', content: (text as { text: string })?.text ?? '' }
+
+          // Multimodal: text + image_url blocks
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const imageBlocks = (blocks as any[]).filter((b) => b.type === 'image_url')
+          const textBlock = blocks.find(b => b.type === 'text')
+          if (imageBlocks.length > 0) {
+            const parts: unknown[] = []
+            if (textBlock && (textBlock as { text: string }).text) {
+              parts.push({ type: 'text', text: (textBlock as { text: string }).text })
+            }
+            for (const img of imageBlocks) {
+              parts.push({ type: 'image_url', image_url: img.image_url })
+            }
+            return { role: 'user', content: parts }
+          }
+
+          return { role: 'user', content: (textBlock as { text: string })?.text ?? '' }
         }
 
         // Assistant: mix of text + tool_use
