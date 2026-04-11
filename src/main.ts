@@ -78,15 +78,17 @@ if (proxyUrl) console.log(chalk.dim(`  Proxy: ${proxyUrl}`))
 
 const config = loadConfig(opts.model)
 if (config.agentName) setAgentName(config.agentName)
+
+// Load skills and hooks BEFORE project context — the skills section
+// is injected into the system prompt via loadProjectContext().
+loadSkills(workDir)
+initHooks(workDir)
+
 const projectContext = loadProjectContext(workDir)
 const engine = new QueryEngine(config, projectContext)
 
 // Initialize sub-agent tool with config (needs access to LLM settings)
 initAgentTool(config)
-
-// Load skills and hooks
-loadSkills(workDir)
-initHooks(workDir)
 
 // ── Resume session if requested ─────────────────────────────────────────────
 if (opts.resume !== undefined) {
@@ -286,6 +288,12 @@ async function handleSubmit(rawText: string): Promise<void> {
       console.log(chalk.cyan.bold('\n  Available skills:\n'))
       for (const s of skills) {
         console.log(`  ${chalk.cyan('/' + s.name)}${s.description ? chalk.dim(' — ' + s.description) : ''}`)
+        if (s.aliases.length > 0) {
+          console.log(chalk.dim(`     aliases: ${s.aliases.map((a) => '/' + a).join(', ')}`))
+        }
+        if (s.triggers.length > 0) {
+          console.log(chalk.dim(`     triggers: ${s.triggers.join(', ')}`))
+        }
       }
       console.log()
     }

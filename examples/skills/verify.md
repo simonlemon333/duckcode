@@ -1,6 +1,8 @@
 ---
 name: verify
 description: Verify the last change actually works
+triggers: [verify, test, typecheck, check if it works, does it pass]
+aliases: [v, check]
 ---
 Before claiming work is done, verify it.
 

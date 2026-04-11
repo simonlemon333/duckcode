@@ -1,6 +1,8 @@
 ---
 name: commit
 description: Generate a commit message for current changes
+triggers: [commit, commit message, write commit, git commit]
+aliases: [c]
 ---
 Run `git diff --cached` to see staged changes. If nothing is staged, run `git diff` for unstaged changes.
 

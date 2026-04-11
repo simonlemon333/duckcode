@@ -17,7 +17,9 @@ export interface Skill {
   name: string
   description: string
   prompt: string
-  source: string // file path
+  source: string       // file path
+  triggers: string[]   // keywords that hint at this skill
+  aliases: string[]    // alternate command names
 }
 
 // ─── Frontmatter parser (no yaml dep needed) ────────────────────────────────
@@ -36,6 +38,19 @@ function parseFrontmatter(content: string): { meta: Record<string, string>; body
     }
   }
   return { meta, body: match[2].trim() }
+}
+
+/**
+ * Parse an inline list: "[word1, word2, word3]" or "word1, word2"
+ */
+function parseList(raw: string | undefined): string[] {
+  if (!raw) return []
+  const cleaned = raw.replace(/^\[|\]$/g, '').trim()
+  if (!cleaned) return []
+  return cleaned
+    .split(',')
+    .map((s) => s.trim().replace(/^["']|["']$/g, ''))
+    .filter((s) => s.length > 0)
 }
 
 // ─── Load skills from a directory ───────────────────────────────────────────
@@ -58,6 +73,8 @@ function loadSkillsFromDir(dir: string): Skill[] {
           description: meta.description || '',
           prompt: body,
           source: filePath,
+          triggers: parseList(meta.triggers),
+          aliases: parseList(meta.aliases),
         })
       } catch {
         // Skip unreadable files
@@ -117,10 +134,37 @@ export function loadSkills(cwd: string): void {
 }
 
 /**
- * Get a skill by slash command name (without the /).
+ * Get a skill by slash command name (without the /). Checks both
+ * canonical names and aliases.
  */
 export function getSkill(name: string): Skill | undefined {
-  return loadedSkills.find(s => s.name === name)
+  return loadedSkills.find(
+    (s) => s.name === name || s.aliases.includes(name),
+  )
+}
+
+/**
+ * Build a section describing all loaded skills for injection into
+ * the system prompt. Duck uses this to know which slash commands
+ * exist and when to suggest them.
+ *
+ * This is the "progressive loading" trick: metadata always in system
+ * prompt, full body only loaded when the user types the command.
+ */
+export function buildSkillsSystemSection(): string {
+  if (loadedSkills.length === 0) return ''
+
+  const lines: string[] = []
+  lines.push('<available_slash_commands>')
+  lines.push('The user can invoke these slash commands. If their request matches one of these patterns, suggest the command instead of doing the work manually.')
+  lines.push('')
+  for (const s of loadedSkills) {
+    const aliasStr = s.aliases.length > 0 ? ` (aliases: ${s.aliases.map((a) => '/' + a).join(', ')})` : ''
+    const triggerStr = s.triggers.length > 0 ? ` [triggers: ${s.triggers.join(', ')}]` : ''
+    lines.push(`- /${s.name}${aliasStr}${triggerStr} — ${s.description}`)
+  }
+  lines.push('</available_slash_commands>')
+  return lines.join('\n')
 }
 
 /**

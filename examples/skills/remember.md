@@ -1,6 +1,8 @@
 ---
 name: remember
 description: Save a key insight or decision to project memory
+triggers: [remember, save to memory, note this, record decision]
+aliases: [mem, note]
 ---
 The user wants to save something to project memory for future sessions.
 

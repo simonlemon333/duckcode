@@ -1,6 +1,8 @@
 ---
 name: review
 description: Review current git changes for issues
+triggers: [review, diff, audit, check my code, code review]
+aliases: [r]
 ---
 Run `git diff` to see the current unstaged changes. If there are no unstaged changes, check `git diff --cached` for staged changes.
 
