@@ -33,23 +33,37 @@ export function setCommandList(commands: string[]): void {
 let hintLineCount = 0
 const MAX_HINT_LINES = 8
 
+// Current list of matches in the hint (used by nav + accept)
+let currentHintMatches: string[] = []
+// Index of highlighted row in the hint dropdown. -1 = no selection.
+let hintSelectedIndex = -1
+// What kind of hint is currently shown (affects how acceptHintSelection
+// rewrites the input buffer)
+type HintKind = 'none' | 'slash' | 'file'
+let hintKind: HintKind = 'none'
+
 function clearHint(): void {
   if (hintLineCount === 0) return
-  process.stdout.write('\x1b[s')  // save cursor
+  // Move down, clear each line, move back up. Using \x1b[E (cursor next
+  // line) avoids scrolling that \n would cause near terminal bottom.
   for (let i = 0; i < hintLineCount; i++) {
-    process.stdout.write('\n\x1b[2K')
+    process.stdout.write('\x1b[E\x1b[2K')
   }
-  process.stdout.write('\x1b[u')  // restore cursor
+  process.stdout.write(`\x1b[${hintLineCount}F`)  // N previous lines, col 0
   hintLineCount = 0
 }
 
 function drawHint(lines: string[]): void {
+  // First erase any existing hint lines below us
   clearHint()
   if (lines.length === 0) return
   const shown = lines.slice(0, MAX_HINT_LINES)
+  // Remember prompt line column 0 — we need to return there after drawing.
+  // We save cursor AT PROMPT LINE (after the prompt content), draw hint below,
+  // then restore.
   process.stdout.write('\x1b[s')
   for (const line of shown) {
-    process.stdout.write('\n\x1b[2K' + line)
+    process.stdout.write('\x1b[E\x1b[2K' + line)
   }
   process.stdout.write('\x1b[u')
   hintLineCount = shown.length
@@ -57,64 +71,111 @@ function drawHint(lines: string[]): void {
 
 /**
  * Given the current input buffer, compute what hint (if any) to show.
- * Returns array of lines to render below the prompt.
+ * Updates module state: currentHintMatches, hintKind.
+ * Returns rendered lines for drawHint().
  */
 function computeHint(buffer: string): string[] {
-  // Case 1: slash command hint — buffer starts with /
+  // Case 1: slash command — buffer starts with /
   if (buffer.startsWith('/')) {
     const query = buffer.slice(1).toLowerCase()
     const matches = commandList.filter((c) => c.startsWith(query))
-    if (matches.length === 0) return []
-    return matches.slice(0, MAX_HINT_LINES).map(
-      (c) => chalk.dim('    ') + chalk.cyan('/' + c),
-    )
+    currentHintMatches = matches
+    hintKind = matches.length > 0 ? 'slash' : 'none'
+    return matches.slice(0, MAX_HINT_LINES).map((c, idx) => {
+      const label = '/' + c
+      if (idx === hintSelectedIndex) {
+        return chalk.dim('    ') + chalk.bgCyan.black(' ' + label + ' ')
+      }
+      return chalk.dim('    ') + chalk.cyan(label)
+    })
   }
 
-  // Case 2: @mention hint — last @ followed by path/url fragment
+  // Case 2: @mention — last @ followed by path/url fragment
   const atMatch = buffer.match(/@([^\s]*)$/)
   if (atMatch) {
     const fragment = atMatch[1]
-    // URLs: don't try to autocomplete
-    if (fragment.startsWith('http')) return []
-    return computeFileHint(fragment)
+    if (fragment.startsWith('http')) {
+      currentHintMatches = []
+      hintKind = 'none'
+      return []
+    }
+    const matches = computeFileMatches(fragment)
+    currentHintMatches = matches
+    hintKind = matches.length > 0 ? 'file' : 'none'
+    return matches.slice(0, MAX_HINT_LINES).map((name, idx) => {
+      const label = '@' + name
+      if (idx === hintSelectedIndex) {
+        return chalk.dim('    ') + chalk.bgCyan.black(' ' + label + ' ')
+      }
+      return chalk.dim('    ') + chalk.cyan(label)
+    })
   }
 
+  currentHintMatches = []
+  hintKind = 'none'
   return []
 }
 
-function computeFileHint(fragment: string): string[] {
-  // Split into directory + prefix
+function computeFileMatches(fragment: string): string[] {
   let dir = inputCwd
   let prefix = fragment
+  let relDirPrefix = ''
   if (fragment.includes('/')) {
     const lastSlash = fragment.lastIndexOf('/')
-    const relDir = fragment.slice(0, lastSlash)
+    relDirPrefix = fragment.slice(0, lastSlash + 1)
     prefix = fragment.slice(lastSlash + 1)
-    dir = join(inputCwd, relDir)
+    dir = join(inputCwd, fragment.slice(0, lastSlash))
   }
 
   if (!existsSync(dir)) return []
 
   try {
-    const entries = readdirSync(dir)
+    return readdirSync(dir)
       .filter((name) => {
-        if (name.startsWith('.')) return false // skip hidden
+        if (name.startsWith('.')) return false
         if (name === 'node_modules') return false
         return name.toLowerCase().startsWith(prefix.toLowerCase())
       })
       .slice(0, MAX_HINT_LINES)
-
-    return entries.map((name) => {
-      let full = name
-      try {
-        const st = statSync(join(dir, name))
-        if (st.isDirectory()) full = name + '/'
-      } catch {}
-      return chalk.dim('    @') + chalk.cyan(full)
-    })
+      .map((name) => {
+        let full = relDirPrefix + name
+        try {
+          const st = statSync(join(dir, name))
+          if (st.isDirectory()) full += '/'
+        } catch {}
+        return full
+      })
   } catch {
     return []
   }
+}
+
+// ─── Hint navigation ────────────────────────────────────────────────────
+
+function handleHintNav(delta: number): void {
+  if (currentHintMatches.length === 0) return
+  const max = Math.min(currentHintMatches.length, MAX_HINT_LINES) - 1
+  if (hintSelectedIndex < 0) {
+    hintSelectedIndex = delta > 0 ? 0 : max
+  } else {
+    hintSelectedIndex = Math.max(0, Math.min(max, hintSelectedIndex + delta))
+  }
+  drawPrompt()
+}
+
+function acceptHintSelection(): void {
+  if (hintSelectedIndex < 0 || hintSelectedIndex >= currentHintMatches.length) return
+  const selected = currentHintMatches[hintSelectedIndex]
+
+  if (hintKind === 'slash') {
+    inputBuffer = '/' + selected + ' '
+  } else if (hintKind === 'file') {
+    // Replace the last @fragment with @<selected>
+    inputBuffer = inputBuffer.replace(/@([^\s]*)$/, '@' + selected)
+  }
+
+  hintSelectedIndex = -1
+  drawPrompt()
 }
 
 /**
@@ -454,27 +515,53 @@ export function startInput(
       return
     }
 
-    for (const ch of data) {
+    let i = 0
+    while (i < data.length) {
+      const ch = data[i]
+
+      // ── Escape sequence (arrow keys, etc) ──────────────────────────
+      // \x1b[A = Up, \x1b[B = Down, \x1b[C = Right, \x1b[D = Left
+      if (ch === '\x1b' && !customInputMode) {
+        // Bare Escape (no following [) — dismiss hint nav
+        if (data[i + 1] !== '[') {
+          if (hintSelectedIndex >= 0) {
+            hintSelectedIndex = -1
+            drawPrompt()
+          }
+          i++
+          continue
+        }
+        // \x1b[X — 3-byte CSI sequence
+        const code = data[i + 2]
+        if (code === 'A') {
+          // Up — navigate hint UP (or ignore if no hint)
+          handleHintNav(-1)
+          i += 3
+          continue
+        }
+        if (code === 'B') {
+          // Down — navigate hint DOWN
+          handleHintNav(+1)
+          i += 3
+          continue
+        }
+        // Ignore left/right/other CSI for now
+        i += 3
+        continue
+      }
+
       // ── Custom input mode ───────────────────────────────────────────
       if (customInputMode) {
-        // For custom input during menu
-        if (ch === '\r' || ch === '\n') {
-          submitCustomInput()
-          continue
-        }
-        if (ch === '\x1b') { // ESC
-          customInputBuffer = ''
-          cancelMenu()
-          continue
-        }
+        if (ch === '\r' || ch === '\n') { submitCustomInput(); i++; continue }
+        if (ch === '\x1b') { customInputBuffer = ''; cancelMenu(); i++; continue }
         if (ch === '\x7f' || ch === '\b') {
           customInputBuffer = customInputBuffer.slice(0, -1)
           renderMenu()
-          continue
+          i++; continue
         }
-        if (ch.charCodeAt(0) < 32 && ch !== '\t') continue
+        if (ch.charCodeAt(0) < 32 && ch !== '\t') { i++; continue }
         customInputBuffer += ch
-        continue
+        i++; continue
       }
 
       // ── Permission mode ─────────────────────────────────────────────
@@ -486,7 +573,7 @@ export function startInput(
           console.log(chalk.red('  ✗ denied'))
           permissionHandler(false)
         }
-        continue
+        i++; continue
       }
 
       // ── Ctrl+C / Ctrl+D ─────────────────────────────────────────────
@@ -499,19 +586,24 @@ export function startInput(
       if (ch === '\x0c') {
         process.stdout.write('\x1b[2J\x1b[H')
         drawPrompt()
-        continue
+        i++; continue
       }
 
-      if (!idle) continue
+      if (!idle) { i++; continue }
 
       // ── Enter ───────────────────────────────────────────────────────
       if (ch === '\r' || ch === '\n') {
+        // If navigating hints with arrow keys, accept selected instead of submitting
+        if (hintSelectedIndex >= 0 && currentHintMatches.length > hintSelectedIndex) {
+          acceptHintSelection()
+          i++; continue
+        }
         if (inputBuffer.length > 0) {
           inputBuffer += '\n'
           if (submitTimer) clearTimeout(submitTimer)
           submitTimer = setTimeout(flushSubmit, 80)
         }
-        continue
+        i++; continue
       }
 
       // Cancel pending submit if more chars arrive (paste in progress)
@@ -523,22 +615,25 @@ export function startInput(
       // ── Backspace ───────────────────────────────────────────────────
       if (ch === '\x7f' || ch === '\b') {
         inputBuffer = inputBuffer.slice(0, -1)
+        hintSelectedIndex = -1
         drawPrompt()
-        continue
+        i++; continue
       }
 
       // ── Tab — slash command completion ──────────────────────────────
       if (ch === '\t') {
-        if (handleTabCompletion()) continue
-        continue  // Ignore Tab when not completing
+        handleTabCompletion()
+        i++; continue
       }
 
-      // ── Ignore control/arrow sequences ──────────────────────────────
-      if (ch.charCodeAt(0) < 32) continue
+      // ── Ignore other control bytes ──────────────────────────────────
+      if (ch.charCodeAt(0) < 32) { i++; continue }
 
       // ── Normal character ────────────────────────────────────────────
       inputBuffer += ch
+      hintSelectedIndex = -1
       drawPrompt()
+      i++
     }
   })
 
