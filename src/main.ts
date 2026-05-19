@@ -21,7 +21,8 @@ import {
   outputToolCall,
   outputError,
 } from './ui/console.js'
-import { startInput, setIdle, showPermission, stopInput, stopSpinner, startSpinner, setCommandList } from './ui/input.js'
+import { startInput, setIdle, showPermission, stopInput, stopSpinner, startSpinner, setCommandList, pauseInput, resumeInput } from './ui/input.js'
+import { runConfigWizard, applyConfigUpdate } from './duck/config-wizard.js'
 import type { PermissionCallback, PermissionResult } from './query/engine.js'
 
 // ── Register all tools (side-effect imports) ──────────────────────────────────
@@ -63,16 +64,11 @@ const workDir = resolve(processCwd(), opts.dir as string)
 // ─── Bootstrap ───────────────────────────────────────────────────────────────
 
 if (!hasConfig()) {
-  console.log(chalk.cyan.bold('\n  🦆 Welcome to DuckCode!\n'))
-  console.log(chalk.white('  No config found. Create ~/.duck/config.json:\n'))
-  console.log(chalk.dim('  {'))
-  console.log(chalk.dim('    "baseUrl": "') + chalk.white('https://your-api-endpoint.com') + chalk.dim('",'))
-  console.log(chalk.dim('    "apiKey": "') + chalk.white('your-key') + chalk.dim('",'))
-  console.log(chalk.dim('    "model": "') + chalk.white('your-model') + chalk.dim('"'))
-  console.log(chalk.dim('  }\n'))
-  console.log(chalk.white('  Or set env vars: ') + chalk.cyan('DUCK_GATEWAY_URL') + chalk.dim(', ') + chalk.cyan('DUCK_API_KEY') + chalk.dim(', ') + chalk.cyan('DUCK_MODEL'))
-  console.log(chalk.dim('\n  Works with any OpenAI-compatible API (LiteLLM, vLLM, Ollama, etc.)\n'))
-  process.exit(0)
+  const result = await runConfigWizard({ firstRun: true })
+  if (!result.saved) {
+    console.log(chalk.dim('  Setup canceled. Run duckcode again when ready.\n'))
+    process.exit(0)
+  }
 }
 
 // Proxy setup (must be before any fetch calls)
@@ -180,6 +176,7 @@ async function handleSubmit(rawText: string): Promise<void> {
     console.log(`  ${chalk.cyan('/dream')}    ${chalk.dim('— Consolidate current session into long-term memory')}`)
     console.log(`  ${chalk.cyan('/memory')}   ${chalk.dim('— Inspect all 6 memory tiers')}`)
     console.log(`  ${chalk.cyan('/rule')}     ${chalk.dim('— Manage persistent rules (list/add/remove/clear)')}`)
+    console.log(`  ${chalk.cyan('/config')}   ${chalk.dim('— Update baseUrl / apiKey / model interactively')}`)
 
     const skills = getAllSkills()
     if (skills.length > 0) {
@@ -224,6 +221,18 @@ async function handleSubmit(rawText: string): Promise<void> {
       console.log(chalk.dim(`    ${path}\n`))
     }
     setIdle(true)
+    return
+  }
+
+  // /config — interactive baseUrl/apiKey/model update
+  if (text.toLowerCase() === '/config') {
+    pauseInput()
+    try {
+      const result = await runConfigWizard()
+      applyConfigUpdate(config, result)
+    } finally {
+      resumeInput()
+    }
     return
   }
 

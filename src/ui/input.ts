@@ -19,6 +19,12 @@ let submitTimer: ReturnType<typeof setTimeout> | null = null
 let idle = true
 let shortCwd = ''
 
+// When true, the raw-mode data handler ignores all input. Used while
+// readline-based flows (config wizard) own stdin. The handler stays
+// attached — the flag is just a "hardware mute" so readline's listener
+// can process keystrokes cleanly without our raw-mode logic also firing.
+let wizardActive = false
+
 // Command completion: main.ts registers the full list of commands
 // (built-ins + skill names + aliases) via setCommandList().
 let commandList: string[] = []
@@ -471,6 +477,9 @@ export function startInput(
   process.stdin.setEncoding('utf-8')
 
   process.stdin.on('data', (data: string) => {
+    // ── Wizard mode: yield stdin to readline ─────────────────────────
+    if (wizardActive) return
+
     // ── Menu mode: handle full data chunk for arrow key sequences ────
     if (menuMode) {
       if (data === '\x1b' || data === 'q') { // ESC or q to cancel
@@ -651,6 +660,29 @@ function flushSubmit(): void {
   } else {
     drawPrompt()
   }
+}
+
+/**
+ * Hand stdin over to a readline-based flow (e.g. config wizard). Disables
+ * raw mode so readline can use line-mode input; sets the `wizardActive`
+ * flag so our data handler ignores any events that still leak through.
+ */
+export function pauseInput(): void {
+  wizardActive = true
+  process.stdin.setRawMode(false)
+}
+
+/**
+ * Reclaim stdin after a readline-based flow finishes. Re-enables raw mode,
+ * clears the mute flag, and redraws the prompt so the user sees a fresh
+ * input line.
+ */
+export function resumeInput(): void {
+  wizardActive = false
+  process.stdin.setRawMode(true)
+  process.stdin.resume()
+  idle = true
+  drawPrompt()
 }
 
 export function stopInput(): void {

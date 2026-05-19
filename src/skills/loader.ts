@@ -167,6 +167,7 @@ const BUILTIN_COMMANDS: Array<{ name: string; desc: string }> = [
   { name: 'dream', desc: 'Extract session facts into long-term memory' },
   { name: 'memory', desc: 'Inspect all 6 memory tiers with sizes and status' },
   { name: 'rule', desc: 'Manage persistent user rules (list/add/remove/clear)' },
+  { name: 'config', desc: 'Update baseUrl, apiKey, or model interactively (writes ~/.duck/config.json)' },
 ]
 
 export function buildSkillsSystemSection(): string {
