@@ -5,8 +5,8 @@ import type {
   GatewayConfig,
 } from '../types.js'
 import { getTool, getToolDefinitions } from '../tools/registry.js'
-import { getStaticSystemPrompt, getDynamicContext } from '../config.js'
 import { compressIfNeeded } from './compress.js'
+import { buildSystemMessage, historyToOpenAI } from './openai-format.js'
 import { runPreHooks, runPostHooks } from '../skills/hooks.js'
 
 export type StreamEvent =
@@ -73,7 +73,11 @@ export class QueryEngine {
 
     for (let turn = 0; turn < MAX_TURNS; turn++) {
       // ── Compress history if too long ──────────────────────────────────────
-      const compressResult = await compressIfNeeded(this.history, this.config)
+      const compressResult = await compressIfNeeded(
+        this.history,
+        this.config,
+        this.projectContext,
+      )
       if (compressResult.compressed) {
         yield {
           type: 'text_delta',
@@ -214,88 +218,12 @@ export class QueryEngine {
       },
     }))
 
-    // Convert history to OpenAI format
-    // 拆分 system prompt：静态部分（可缓存）+ 动态部分
-    const staticPrompt = getStaticSystemPrompt(this.config)
-    const dynamicPrompt = getDynamicContext(this.projectContext)
-
-    // Combine system prompt — cache_control only if provider supports it
-    const fullSystemPrompt = dynamicPrompt
-      ? `${staticPrompt}\n\n${dynamicPrompt}`
-      : staticPrompt
-
-    const systemMessages = [
-      { role: 'system', content: fullSystemPrompt },
-    ]
-
+    // System + history → OpenAI shape. Shared with compress.ts so the
+    // summary call sends a byte-identical prefix and hits the provider's
+    // prefix cache.
     const messages = [
-      ...systemMessages,
-      ...this.history.map(m => {
-        if (typeof m.content === 'string') {
-          return { role: m.role, content: m.content }
-        }
-
-        // Handle content blocks → OpenAI format
-        const blocks = m.content as ContentBlock[]
-
-        if (m.role === 'user') {
-          // Tool results
-          const toolResults = blocks.filter(b => b.type === 'tool_result')
-          if (toolResults.length > 0) {
-            return toolResults.map(b => {
-              if (b.type !== 'tool_result') return null
-              return {
-                role: 'tool',
-                tool_call_id: b.tool_use_id,
-                content: b.content,
-              }
-            }).filter(Boolean)
-          }
-
-          // Multimodal: text + image_url blocks
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const imageBlocks = (blocks as any[]).filter((b) => b.type === 'image_url')
-          const textBlock = blocks.find(b => b.type === 'text')
-          if (imageBlocks.length > 0) {
-            const parts: unknown[] = []
-            if (textBlock && (textBlock as { text: string }).text) {
-              parts.push({ type: 'text', text: (textBlock as { text: string }).text })
-            }
-            for (const img of imageBlocks) {
-              parts.push({ type: 'image_url', image_url: img.image_url })
-            }
-            return { role: 'user', content: parts }
-          }
-
-          return { role: 'user', content: (textBlock as { text: string })?.text ?? '' }
-        }
-
-        // Assistant: mix of text + tool_use
-        const text = blocks
-          .filter(b => b.type === 'text')
-          .map(b => (b as { text: string }).text)
-          .join('')
-
-        const toolCalls = blocks
-          .filter(b => b.type === 'tool_use')
-          .map(b => {
-            const tc = b as ToolUseContent
-            return {
-              id: tc.id,
-              type: 'function',
-              function: {
-                name: tc.name,
-                arguments: JSON.stringify(tc.input),
-              },
-            }
-          })
-
-        return {
-          role: 'assistant',
-          content: text || null,
-          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-        }
-      }).flat().filter(Boolean),
+      buildSystemMessage(this.config, this.projectContext),
+      ...historyToOpenAI(this.history),
     ]
 
     const response = await fetch(
