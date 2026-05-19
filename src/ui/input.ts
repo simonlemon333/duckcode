@@ -25,6 +25,15 @@ let shortCwd = ''
 // can process keystrokes cleanly without our raw-mode logic also firing.
 let wizardActive = false
 
+// Bracketed paste mode: when the terminal supports it (\x1b[?2004h), pasted
+// text arrives wrapped between \x1b[200~ and \x1b[201~. Detecting these
+// markers lets us treat a paste as one input event instead of N keystrokes
+// — which fixes multi-line paste truncation seen with naive raw input.
+const PASTE_START = '\x1b[200~'
+const PASTE_END = '\x1b[201~'
+let pasteMode = false           // True between START and END markers
+let pasteBuffer = ''            // Accumulated paste content (may span chunks)
+
 // Command completion: main.ts registers the full list of commands
 // (built-ins + skill names + aliases) via setCommandList().
 let commandList: string[] = []
@@ -476,9 +485,65 @@ export function startInput(
   process.stdin.resume()
   process.stdin.setEncoding('utf-8')
 
+  // Enable bracketed paste — terminal will wrap pasted text in markers.
+  process.stdout.write('\x1b[?2004h')
+
+  // Restore terminal modes on hard process exit (Ctrl+C handled by the data
+  // handler calls process.exit(0), which bypasses stopInput). Without this,
+  // the user's next shell sees raw \x1b[200~ around pastes and a stuck
+  // taskbar progress indicator.
+  process.on('exit', () => {
+    process.stdout.write('\x1b[?2004l')  // disable bracketed paste
+    process.stdout.write('\x1b]9;4;0;\x07')  // clear OSC 9;4 taskbar progress
+  })
+
+  // Redraw prompt after terminal resize. Skip while a modal (wizard/menu/
+  // permission) owns the screen — those flows manage their own layout and
+  // an unexpected redraw would clobber them.
+  process.on('SIGWINCH', () => {
+    if (wizardActive || menuMode || permissionHandler || !idle) return
+    clearHint()
+    drawPrompt()
+  })
+
   process.stdin.on('data', (data: string) => {
     // ── Wizard mode: yield stdin to readline ─────────────────────────
     if (wizardActive) return
+
+    // ── Bracketed paste: handle a paste block as one input event ─────
+    // Pastes may span multiple data chunks, so we maintain pasteMode +
+    // pasteBuffer across calls until the closing PASTE_END marker arrives.
+    if (pasteMode) {
+      const endIdx = data.indexOf(PASTE_END)
+      if (endIdx === -1) {
+        pasteBuffer += data
+        return
+      }
+      pasteBuffer += data.slice(0, endIdx)
+      commitPaste()
+      // Continue processing whatever followed the paste end marker
+      const rest = data.slice(endIdx + PASTE_END.length)
+      if (rest.length === 0) return
+      data = rest
+    }
+    const pasteStartIdx = data.indexOf(PASTE_START)
+    if (pasteStartIdx !== -1) {
+      // Anything before the paste start: process as normal keystrokes (rare
+      // but possible). We don't currently chunk it — assume terminal sends
+      // paste as a whole data event in most cases.
+      pasteMode = true
+      const afterStart = data.slice(pasteStartIdx + PASTE_START.length)
+      const endIdx = afterStart.indexOf(PASTE_END)
+      if (endIdx === -1) {
+        pasteBuffer = afterStart
+        return
+      }
+      pasteBuffer = afterStart.slice(0, endIdx)
+      commitPaste()
+      const rest = afterStart.slice(endIdx + PASTE_END.length)
+      if (rest.length === 0) return
+      data = rest
+    }
 
     // ── Menu mode: handle full data chunk for arrow key sequences ────
     if (menuMode) {
@@ -663,12 +728,35 @@ function flushSubmit(): void {
 }
 
 /**
+ * Apply a completed bracketed-paste block. Newlines are normalized so
+ * CRLF (Windows clipboards) and bare CR don't introduce blank lines or
+ * lose breaks. The whole thing lands in inputBuffer as one event — no
+ * per-keystroke processing, no submit debounce confusion.
+ */
+function commitPaste(): void {
+  const text = pasteBuffer.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  pasteMode = false
+  pasteBuffer = ''
+  if (submitTimer) {
+    clearTimeout(submitTimer)
+    submitTimer = null
+  }
+  inputBuffer += text
+  hintSelectedIndex = -1
+  drawPrompt()
+}
+
+/**
  * Hand stdin over to a readline-based flow (e.g. config wizard). Disables
  * raw mode so readline can use line-mode input; sets the `wizardActive`
  * flag so our data handler ignores any events that still leak through.
  */
 export function pauseInput(): void {
   wizardActive = true
+  // Disable bracketed paste during readline flows — otherwise pasted text
+  // arrives wrapped in \x1b[200~ ... \x1b[201~ markers that readline can't
+  // interpret as line editing.
+  process.stdout.write('\x1b[?2004l')
   process.stdin.setRawMode(false)
 }
 
@@ -681,11 +769,17 @@ export function resumeInput(): void {
   wizardActive = false
   process.stdin.setRawMode(true)
   process.stdin.resume()
+  // Re-enable bracketed paste for the main raw-mode loop.
+  process.stdout.write('\x1b[?2004h')
   idle = true
   drawPrompt()
 }
 
 export function stopInput(): void {
+  // Disable bracketed paste so the terminal returns to normal paste behavior
+  // after DuckCode exits. Without this, the user's next shell would see
+  // raw \x1b[200~/\x1b[201~ markers around pasted text.
+  process.stdout.write('\x1b[?2004l')
   process.stdin.setRawMode(false)
   process.stdin.pause()
 }

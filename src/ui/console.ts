@@ -138,7 +138,18 @@ export function setAgentName(name: string): void {
   agentDisplayName = name
 }
 
+// OSC 9;4 taskbar progress (Windows Terminal, iTerm2, modern Konsole).
+// Mode 3 = indeterminate busy; mode 0 = clear. ConPTY / xterm-old ignore it.
+export function taskbarBusy(): void {
+  process.stdout.write('\x1b]9;4;3;\x07')
+}
+
+export function taskbarClear(): void {
+  process.stdout.write('\x1b]9;4;0;\x07')
+}
+
 export function outputAssistantStart(): void {
+  taskbarBusy()
   console.log()
   console.log(chalk.green.bold(`  ● ${agentDisplayName}`))
   console.log()
@@ -162,6 +173,7 @@ export function streamFinish(): void {
   lineBuffer = ''
   inCodeBlock = false
   codeBlockLang = ''
+  taskbarClear()
 }
 
 // ─── Messages ────────────────────────────────────────────────────────────────
