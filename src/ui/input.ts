@@ -45,7 +45,11 @@ export function setCommandList(commands: string[]): void {
 
 // ─── Hint lines (real-time dropdown below prompt) ────────────────────────
 
-let hintLineCount = 0
+// Total rows in the current prompt block (top border + input + hints + bottom
+// border + footer). 0 means nothing currently drawn — clearPromptBlock is a
+// no-op then. The block is fully redrawn on each keystroke; we accept the
+// scroll cost when hint count changes (rare) for a much simpler state machine.
+let promptBlockTotalRows = 0
 const MAX_HINT_LINES = 8
 
 // Current list of matches in the hint (used by nav + accept)
@@ -57,37 +61,79 @@ let hintSelectedIndex = -1
 type HintKind = 'none' | 'slash' | 'file'
 let hintKind: HintKind = 'none'
 
-function clearHint(): void {
-  if (hintLineCount === 0) return
-  // Move down, clear each line, move back up. Using \x1b[E (cursor next
-  // line) avoids scrolling that \n would cause near terminal bottom.
-  for (let i = 0; i < hintLineCount; i++) {
-    process.stdout.write('\x1b[E\x1b[2K')
+/**
+ * Clear the entire prompt block: top border + input row + hint rows + bottom
+ * border + footer. After this, cursor is positioned at column 0 of the row
+ * where the top border was — ready for the next drawPrompt() to start writing
+ * a fresh block at the same screen position (no scrolling unless the new
+ * block has different height).
+ *
+ * Uses non-scrolling cursor moves (\x1b[A/B) so a block at the terminal
+ * bottom doesn't push history up on every keystroke.
+ */
+/**
+ * Visible (terminal column) width of a string. CJK ideographs, fullwidth
+ * forms, and most emoji occupy 2 columns; ASCII and most Latin-extended
+ * occupy 1. We use this for cursor placement after the input row —
+ * inputBuffer.length (UTF-16 code units) misplaces the cursor every time
+ * a wide character is typed (you'd see the cursor "in the middle" of
+ * what looks like the trailing portion of the text).
+ *
+ * Ranges follow the Unicode East Asian Width property's W and F values
+ * approximately; this is a pragmatic subset, not a full wcwidth.
+ */
+function visibleWidth(s: string): number {
+  let w = 0
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0
+    if (cp < 0x80) {
+      w += 1
+    } else if (
+      (cp >= 0x1100 && cp <= 0x115F) || // Hangul Jamo (initial)
+      (cp >= 0x2E80 && cp <= 0x303E) || // CJK radicals / punctuation
+      (cp >= 0x3041 && cp <= 0x33FF) || // Hiragana, Katakana, CJK symbols
+      (cp >= 0x3400 && cp <= 0x4DBF) || // CJK Unified Ideographs Ext A
+      (cp >= 0x4E00 && cp <= 0x9FFF) || // CJK Unified Ideographs
+      (cp >= 0xA000 && cp <= 0xA4CF) || // Yi syllables
+      (cp >= 0xAC00 && cp <= 0xD7A3) || // Hangul syllables
+      (cp >= 0xF900 && cp <= 0xFAFF) || // CJK compatibility ideographs
+      (cp >= 0xFE30 && cp <= 0xFE4F) || // CJK compatibility forms
+      (cp >= 0xFF00 && cp <= 0xFF60) || // Fullwidth forms
+      (cp >= 0xFFE0 && cp <= 0xFFE6) || // Fullwidth signs
+      (cp >= 0x1F300 && cp <= 0x1FAFF) || // Emoji / pictographs
+      (cp >= 0x20000 && cp <= 0x2FFFD) || // CJK Ext B–F
+      (cp >= 0x30000 && cp <= 0x3FFFD)
+    ) {
+      w += 2
+    } else {
+      w += 1
+    }
   }
-  process.stdout.write(`\x1b[${hintLineCount}F`)  // N previous lines, col 0
-  hintLineCount = 0
+  return w
 }
 
-function drawHint(lines: string[]): void {
-  // First erase any existing hint lines below us
-  clearHint()
-  if (lines.length === 0) return
-  const shown = lines.slice(0, MAX_HINT_LINES)
-  // Remember prompt line column 0 — we need to return there after drawing.
-  // We save cursor AT PROMPT LINE (after the prompt content), draw hint below,
-  // then restore.
-  process.stdout.write('\x1b[s')
-  for (const line of shown) {
-    process.stdout.write('\x1b[E\x1b[2K' + line)
+function clearPromptBlock(): void {
+  if (promptBlockTotalRows === 0) return
+  // Cursor is at end-of-input on row 1 of the block (0 = top border).
+  process.stdout.write('\r')          // col 0 of input row
+  process.stdout.write('\x1b[A')      // up to top border row
+  for (let i = 0; i < promptBlockTotalRows; i++) {
+    process.stdout.write('\x1b[2K')
+    if (i < promptBlockTotalRows - 1) {
+      process.stdout.write('\x1b[B\r')
+    }
   }
-  process.stdout.write('\x1b[u')
-  hintLineCount = shown.length
+  // Return cursor to col 0 of the (now-blank) top border row.
+  if (promptBlockTotalRows > 1) {
+    process.stdout.write(`\x1b[${promptBlockTotalRows - 1}A\r`)
+  }
+  promptBlockTotalRows = 0
 }
 
 /**
  * Given the current input buffer, compute what hint (if any) to show.
  * Updates module state: currentHintMatches, hintKind.
- * Returns rendered lines for drawHint().
+ * Returns rendered lines for drawPrompt() to embed in the block.
  */
 function computeHint(buffer: string): string[] {
   // Case 1: slash command — buffer starts with /
@@ -287,18 +333,63 @@ export function stopSpinner(): void {
   }
 }
 
+/**
+ * Render the full sandwich block:
+ *
+ *   ─────────────────────  (top border)        row 0
+ *   ❯ user input here       (input row)         row 1
+ *     /dream — …             (hint dropdown)    rows 2..(H+1)
+ *     /diff — …
+ *   ─────────────────────  (bottom border)     row H+2
+ *     ⏵⏵ ready · /help …    (footer)            row H+3
+ *
+ * Each call clears the previous block fully and rewrites from scratch.
+ * Uses explicit \r\n at line breaks (raw mode disables OPOST so a bare \n
+ * is LF-only and doesn't reset column reliably across terminals), and
+ * computes the final cursor position arithmetically rather than relying on
+ * \x1b[s/\x1b[u (some terminals — Windows Terminal among them — have only
+ * one save slot or treat the first restore as a no-op).
+ */
 function drawPrompt(): void {
-  clearPromptLine()
+  clearPromptBlock()
   if (!idle) {
-    clearHint()
     startSpinner()
     return
   }
   stopSpinner()
-  const display = inputBuffer || chalk.dim(`Ask Duck… (${shortCwd})`)
-  process.stdout.write(chalk.cyan.bold('  ❯ ') + display)
-  // Update the real-time hint dropdown below the prompt
-  drawHint(computeHint(inputBuffer))
+
+  // Border kept 2 chars shy of terminal edge so it never sits in the
+  // pending-wrap state at the last column.
+  const width = Math.max((process.stdout.columns || 80) - 2, 10)
+  const border = chalk.dim('─'.repeat(width))
+  const hintLines = computeHint(inputBuffer)
+  const footer =
+    chalk.dim('  ⏵⏵ ') +
+    chalk.dim(`${shortCwd} · /help to see commands · Ctrl+C to exit`)
+
+  // Top border, input row, hint rows, bottom border, footer.
+  // \r\n on each line break to keep column at 0 regardless of OPOST state.
+  process.stdout.write(border + '\r\n')
+  process.stdout.write(chalk.cyan.bold('  ❯ ') + inputBuffer + '\r\n')
+  for (const h of hintLines) {
+    process.stdout.write(h + '\r\n')
+  }
+  process.stdout.write(border + '\r\n')
+  process.stdout.write(footer)
+
+  promptBlockTotalRows = hintLines.length + 4 // top + input + hints + bottom + footer
+
+  // Move cursor back to end of input row (row 1 of block).
+  // From footer row (row H+3), up by (H + 2) rows reaches input row.
+  const upRows = hintLines.length + 2
+  // 1-indexed column: "  ❯ " is 4 visible columns, cursor lands just after
+  // the typed text. Use visible width (not code-unit length) so CJK / emoji
+  // input doesn't leave the cursor stranded inside the string.
+  const inputCol = 5 + visibleWidth(inputBuffer)
+  if (upRows > 0) {
+    process.stdout.write(`\x1b[${upRows}A`)
+  }
+  process.stdout.write(`\x1b[${inputCol}G`)
 }
 
 // ─── Permission prompt ──────────────────────────────────────────────────────
@@ -335,7 +426,7 @@ export function showMenu(
 ): Promise<{ value: string; customInput?: string }> {
   return new Promise((resolve) => {
     stopSpinner()
-    clearHint()
+    clearPromptBlock()
 
     menuOptions = options
     menuHasCustomInput = hasCustomInput
@@ -473,6 +564,28 @@ export function setIdle(value: boolean): void {
 
 // ─── Start listening ─────────────────────────────────────────────────────────
 
+// Patch console.log once on first startInput so async writes during the
+// idle state (when the prompt block is drawn) clear the block, write to
+// scrollback, then redraw. Solves the MCP-load-overlapping-footer race
+// and similar interleavings without each call site having to know about
+// the renderer. During !idle (block already cleared, streaming/handler
+// running), the wrapper passes through unchanged.
+let logPatched = false
+function patchConsoleLog(): void {
+  if (logPatched) return
+  logPatched = true
+  const original = console.log.bind(console)
+  console.log = (...args: unknown[]): void => {
+    if (promptBlockTotalRows === 0) {
+      original(...args)
+      return
+    }
+    clearPromptBlock()
+    original(...args)
+    if (idle) drawPrompt()
+  }
+}
+
 export function startInput(
   cwd: string,
   onSubmit: SubmitHandler,
@@ -480,6 +593,7 @@ export function startInput(
   shortCwd = cwd.replace(process.env.HOME ?? '', '~')
   inputCwd = cwd
   submitHandler = onSubmit
+  patchConsoleLog()
 
   process.stdin.setRawMode(true)
   process.stdin.resume()
@@ -502,7 +616,7 @@ export function startInput(
   // an unexpected redraw would clobber them.
   process.on('SIGWINCH', () => {
     if (wizardActive || menuMode || permissionHandler || !idle) return
-    clearHint()
+    // drawPrompt clears the old block internally; one call is enough.
     drawPrompt()
   })
 
@@ -718,8 +832,7 @@ function flushSubmit(): void {
   submitTimer = null
   const text = inputBuffer.trim()
   inputBuffer = ''
-  clearHint()
-  clearPromptLine()
+  clearPromptBlock()
   if (text && submitHandler) {
     submitHandler(text)
   } else {

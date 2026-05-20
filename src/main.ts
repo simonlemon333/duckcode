@@ -46,7 +46,7 @@ import { initializeMcpTools, cleanupMcpConnections, listMcpServers } from './too
 // ─── CLI entry point ──────────────────────────────────────────────────────────
 
 // Read version from package.json at build time (tsup inlines it)
-const VERSION = '0.1.7'
+const VERSION = '0.1.8'
 
 program
   .name('duckcode')
